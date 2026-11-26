@@ -1,0 +1,22 @@
+{
+  "name": "relay-crm",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently -k \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm test -w backend",
+    "lint": "eslint frontend/src backend/src",
+    "format": "prettier --write frontend/src backend/src"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.5",
+    "eslint": "^9.39.5",
+    "prettier": "^3.10.1",
+    "typescript-eslint": "^8.74.0"
+  }
+}
