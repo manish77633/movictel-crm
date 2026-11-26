@@ -205,11 +205,11 @@ export function useWorkspace(demo: boolean) {
         void client.invalidateQueries({
           queryKey: ['workspace', scope],
           predicate: ({ queryKey }) =>
-            /^\/(leads|analytics|dashboard|integrations\/google-sheets)(\/|\?|$)/.test(
+            /^\/(leads|analytics|dashboard|campaign-sheets|integrations\/google-sheets)(\/|\?|$)/.test(
               String(queryKey[2]),
             ),
         })
-    }, 60_000)
+    }, 30_000)
     socket.on('connect', () => void client.invalidateQueries({ queryKey: ['workspace', scope] }))
     return () => {
       window.clearInterval(refresh)

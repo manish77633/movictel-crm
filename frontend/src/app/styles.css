@@ -1291,3 +1291,81 @@ dialog::backdrop {
     animation: none !important;
   }
 }
+
+.campaign-toolbar,
+.campaign-panel-header,
+.campaign-sync-actions,
+.lead-phone,
+.lead-contact-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.campaign-toolbar,
+.campaign-panel-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.campaign-toolbar {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-left: 3px solid var(--blue);
+}
+.campaign-toolbar label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-weight: 600;
+}
+.campaign-toolbar label span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.campaign-toolbar select {
+  max-width: min(42vw, 320px);
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+}
+.campaign-toolbar > p {
+  flex-basis: 100%;
+}
+.campaign-sync-actions {
+  flex-wrap: wrap;
+}
+.campaign-connections small {
+  display: block;
+  margin-top: 4px;
+}
+.campaign-panel form {
+  margin-top: 12px;
+}
+.lead-contact-actions {
+  gap: 2px;
+}
+.lead-contact-actions .whatsapp-link {
+  color: var(--green);
+}
+.lead-sheet-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 185px), 1fr));
+  gap: 2px 16px;
+  margin: 12px 0;
+}
+.lead-sheet-fields > div {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.lead-sheet-fields dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.lead-sheet-fields dd {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

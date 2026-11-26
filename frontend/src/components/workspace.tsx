@@ -19,6 +19,8 @@ import {
   PanelLeftClose,
   Plus,
   Search,
+  RefreshCw,
+  Sheet,
   Settings,
   UsersRound,
 } from 'lucide-react'
@@ -32,11 +34,11 @@ import {
   type Task,
   type Activity,
 } from '../lib/demo'
-import { Avatar, Dashboard, LeadTable, Status, shortDate } from './dashboard'
+import { Avatar, ContactLinks, Dashboard, LeadTable, Status, shortDate } from './dashboard'
 import { Pipeline } from './pipeline'
 import { useApi, useWorkspace, type LeadDetails, type Member } from './workspace-data'
 import { ActionForm, Dialog, Empty, FollowUpFields, LeadFields } from './crm-forms'
-import { GoogleSheets } from './google-sheets'
+import { GoogleSheets, SyncFeedback, useSheetSync, type CampaignSheet } from './google-sheets'
 
 const navigation = [
   ['Overview', LayoutDashboard],
@@ -99,6 +101,7 @@ function WorkspaceContent() {
     [sort, setSort] = useState('newest'),
     [page, setPage] = useState(1)
   const [selection, setSelection] = useState<string[]>([])
+  const [selectedSheet, setSelectedSheet] = useState('')
   const [range, setRange] = useState('30'),
     [from, setFrom] = useState(''),
     [to, setTo] = useState('')
@@ -113,6 +116,19 @@ function WorkspaceContent() {
     requestedView === 'Admin panel' && !adminPanel
       ? 'Overview'
       : (requestedView ?? (adminPanel ? 'Admin panel' : 'Overview'))
+  const sheets = useApi<CampaignSheet[]>(scope, '/campaign-sheets')
+  const campaignSheets = sheets.data || []
+  const activeCampaign = campaignSheets.find((sheet) => sheet._id === selectedSheet)
+  const campaignSheetId = activeCampaign?._id
+  const latestSheetSync =
+    activeCampaign?.lastSyncAt ??
+    campaignSheets
+      .filter((sheet) => !activeCampaign && sheet.lastSyncAt)
+      .reduce<string | undefined>(
+        (latest, sheet) => (!latest || sheet.lastSyncAt! > latest ? sheet.lastSyncAt : latest),
+        undefined,
+      )
+  const sheetSync = useSheetSync(scope, state.refreshWorkspace)
   useEffect(() => {
     const timer = setTimeout(() => {
       setQuery(search)
@@ -131,7 +147,7 @@ function WorkspaceContent() {
   }, [view])
   useEffect(() => {
     setSelection([])
-  }, [scope, view, status, source, agent, sort, page, query])
+  }, [scope, view, status, source, agent, sort, page, query, campaignSheetId])
   const [referenceTime] = useState(() => Date.now())
   const dateStart =
     range === 'custom'
@@ -142,6 +158,7 @@ function WorkspaceContent() {
         'T00:00:00.000Z'
   const dateEnd = range === 'custom' && to ? to + 'T23:59:59.999Z' : undefined
   const dateParams = new URLSearchParams({
+    ...(campaignSheetId && { campaignSheetId }),
     ...(dateStart && { from: dateStart }),
     ...(dateEnd && { to: dateEnd }),
   })
@@ -149,6 +166,7 @@ function WorkspaceContent() {
     limit: view === 'Pipeline' ? '100' : '25',
     page: String(view === 'Pipeline' ? 1 : page),
     sort,
+    ...(campaignSheetId && { campaignSheetId }),
     ...(query && { q: query }),
     ...(status && view !== 'Pipeline' && { status }),
     ...(source && { source }),
@@ -315,8 +333,7 @@ function WorkspaceContent() {
           {crmAdmin && account.data && !account.data.rows.length && (
             <>
               <p>
-                Create a workspace for your first sheet. Then connect the sheet and grant client
-                access.
+                Create a workspace for your client. Then connect campaign sheets and grant access.
               </p>
               <ActionForm
                 label="Create workspace"
@@ -464,6 +481,48 @@ function WorkspaceContent() {
           </div>
         </header>
         <main className="app-content">
+          {campaignSheets.length > 0 &&
+            ['Overview', 'Analytics', 'Leads', 'Pipeline'].includes(view) && (
+              <section className="surface campaign-toolbar" aria-label="Campaign filters">
+                <label>
+                  <span>
+                    <Sheet size={16} /> Campaign
+                  </span>
+                  <select
+                    value={campaignSheetId || ''}
+                    onChange={(event) => {
+                      setSelectedSheet(event.target.value)
+                      setPage(1)
+                    }}
+                  >
+                    <option value="">All campaigns</option>
+                    {campaignSheets.map((sheet) => (
+                      <option value={sheet._id} key={sheet._id}>
+                        {sheet.campaignName || sheet.tabName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="campaign-sync-actions">
+                  <small>
+                    {latestSheetSync
+                      ? 'Last sync ' + new Date(latestSheetSync).toLocaleString()
+                      : 'Waiting for first sync'}
+                  </small>
+                  {(adminPanel || workspace?.role === 'client') && (
+                    <button
+                      className="button"
+                      type="button"
+                      disabled={sheetSync.busy}
+                      onClick={() => void sheetSync.sync(campaignSheetId)}
+                    >
+                      <RefreshCw size={15} /> {sheetSync.busy ? 'Refreshing�' : 'Refresh leads'}
+                    </button>
+                  )}
+                </div>
+                <SyncFeedback feedback={sheetSync.feedback} />
+              </section>
+            )}
           {(view === 'Overview' || view === 'Analytics') && (
             <>
               <div className="date-row">
@@ -511,7 +570,7 @@ function WorkspaceContent() {
               ) : (
                 <Empty>Loading workspace metrics…</Empty>
               )}
-              {view === 'Overview' && (
+              {view === 'Overview' && !campaignSheetId && (
                 <div className="dashboard-grid overview-bottom">
                   <section className="surface">
                     <header>
@@ -789,7 +848,7 @@ function WorkspaceContent() {
               <div className="page-title">
                 <div>
                   <h1>Admin panel</h1>
-                  <p>Manage the sheet and client access for {workspace?.name}.</p>
+                  <p>Manage campaign sheets and client access for {workspace?.name}.</p>
                 </div>
                 <button className="button" onClick={() => setDialog('workspaces')}>
                   Manage workspaces
@@ -814,7 +873,7 @@ function WorkspaceContent() {
                     </button>
                   </div>
                 </div>
-                <p>Clients can see leads imported into the workspaces you grant them.</p>
+                <p>Clients can see all campaign sheets in the workspaces you grant them.</p>
                 <ul className="row-list">
                   {members
                     .filter((member) => member.role === 'client')
@@ -904,6 +963,7 @@ function WorkspaceContent() {
                 <Status value={row.status} />
               </div>
               <div className="toolbar">
+                <ContactLinks phone={row.phone} />
                 <button className="button" onClick={() => setDialog('edit')}>
                   Edit lead
                 </button>
@@ -915,8 +975,24 @@ function WorkspaceContent() {
                 <h3>Lead information</h3>
                 <p>
                   {row.source}
-                  {row.campaign ? ' · ' + row.campaign : ''} · Consent {row.consent || 'unknown'}
+                  {(row.campaignSheetName || row.campaign) &&
+                    ' · ' + (row.campaignSheetName || row.campaign)}
                 </p>
+                {row.company && (
+                  <p>
+                    <strong>Company</strong> {row.company}
+                  </p>
+                )}
+                {!!row.sheetFields?.length && (
+                  <dl className="lead-sheet-fields">
+                    {row.sheetFields.map(({ label, value }, index) => (
+                      <div key={index}>
+                        <dt>{label}</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
                 {!!row.tags?.length && (
                   <div className="toolbar">
                     {row.tags.map((tag) => (
@@ -1116,6 +1192,7 @@ function WorkspaceContent() {
                     <button
                       className="text-button"
                       onClick={() => {
+                        setSelectedSheet('')
                         state.setSelected(item._id)
                         go('Overview')
                       }}
@@ -1131,6 +1208,7 @@ function WorkspaceContent() {
                   label="Create workspace"
                   onSave={async (input) => {
                     await state.createWorkspace(input.name)
+                    setSelectedSheet('')
                     go('Admin panel')
                     setToast('Workspace created')
                   }}

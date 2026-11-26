@@ -72,6 +72,9 @@ export const Lead = collection(
     company: String,
     source: String,
     campaign: String,
+    campaignSheetId: String,
+    campaignSheetName: String,
+    sheetFields: [{ label: String, value: String, _id: false }],
     pageId: String,
     formId: String,
     assignedTo: String,
@@ -90,6 +93,7 @@ export const Lead = collection(
       { unique: true, partialFilterExpression: { externalId: { $type: 'string' } } },
     ],
     [{ workspaceId: 1, archivedAt: 1, createdAt: -1 }],
+    [{ workspaceId: 1, campaignSheetId: 1, archivedAt: 1, createdAt: -1 }],
     [{ workspaceId: 1, assignedTo: 1, status: 1 }],
     [{ workspaceId: 1, phone: 1, consent: 1 }],
   ],
@@ -147,16 +151,20 @@ export const Integration = collection(
   ],
 )
 export const SheetConnection = collection('SheetConnection', {
-  workspaceId: { type: String, required: true, unique: true },
+  workspaceId: { type: String, required: true, index: true },
   spreadsheetId: { type: String, required: true, unique: true },
   sheetId: { type: Number, required: true },
   tabName: String,
+  campaignName: String,
+  legacyIds: Boolean,
+  lastAttemptAt: Date,
   lastSyncAt: Date,
   lastImported: Number,
   skipped: Number,
   error: String,
   leaseUntil: Date,
 })
+SheetConnection.schema.set('autoIndex', false)
 export const FacebookPage = collection(
   'FacebookPage',
   { externalId: String, name: String, credential: { type: String, select: false } },

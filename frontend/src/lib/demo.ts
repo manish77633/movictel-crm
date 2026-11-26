@@ -8,6 +8,9 @@ export type Lead = {
   company?: string
   source: string
   campaign?: string
+  campaignSheetId?: string
+  campaignSheetName?: string
+  sheetFields?: { label: string; value: string }[]
   status: Stage
   consent?: string
   assignedTo?: string

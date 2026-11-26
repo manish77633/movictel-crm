@@ -59,6 +59,7 @@ export function parseSheetRows(values: string[][]) {
       email: string
       company: string
       campaign: string
+      sheetFields: { label: string; value: string }[]
     }
   >()
   for (const row of rows) {
@@ -88,6 +89,10 @@ export function parseSheetRows(values: string[][]) {
         email,
         company: read('company').slice(0, 160),
         campaign: read('campaign').slice(0, 160),
+        sheetFields: header.flatMap((label, index) => {
+          const value = String(row[index] ?? '').trim()
+          return label && value ? [{ label: String(label), value }] : []
+        }),
       })
   }
   return { leads: [...leads.values()], skipped }

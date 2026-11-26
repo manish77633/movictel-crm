@@ -15,6 +15,7 @@ import {
   Facebook,
   Instagram,
   MessageCircle,
+  Phone,
   Plus,
   UsersRound,
 } from 'lucide-react'
@@ -57,6 +58,30 @@ export function Source({ name }: { name: string }) {
     </span>
   )
 }
+export function ContactLinks({ phone }: { phone?: string }) {
+  const number = phone?.replace(/[\s().-]/g, '').replace(/^00/, '+')
+  if (!number || !/^\+?[0-9]{7,15}$/.test(number)) return null
+  return (
+    <span className="lead-contact-actions">
+      <a className="icon-button" href={'tel:' + number} title="Call lead" aria-label="Call lead">
+        <Phone size={16} />
+      </a>
+      {/^\+[1-9][0-9]{7,14}$/.test(number) && (
+        <a
+          className="icon-button whatsapp-link"
+          href={'https://wa.me/' + number.slice(1)}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open WhatsApp"
+          aria-label="Open WhatsApp"
+        >
+          <MessageCircle size={17} />
+        </a>
+      )}
+    </span>
+  )
+}
+
 export function LeadTable({
   rows,
   onOpen,
@@ -121,11 +146,18 @@ export function LeadTable({
                   </div>
                 </div>
               </td>
-              {!preview && <td>{row.phone || '—'}</td>}
+              {!preview && (
+                <td>
+                  <div className="lead-phone">
+                    {row.phone || '—'}
+                    <ContactLinks phone={row.phone} />
+                  </div>
+                </td>
+              )}
               <td>
                 <Source name={row.source} />
               </td>
-              <td>{row.campaign || '—'}</td>
+              <td>{row.campaignSheetName || row.campaign || '—'}</td>
               {assignees && (
                 <td>{row.assignedTo ? assignees[row.assignedTo] || 'Assigned' : 'Unassigned'}</td>
               )}

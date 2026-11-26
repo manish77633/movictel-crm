@@ -11,7 +11,7 @@ import { conversations, rules } from './messaging.js'
 import { webhooks } from './webhooks.js'
 import { integrations, metaCallback } from './integrations.js'
 import { authenticate, workspaced } from './runtime.js'
-import { sheetSources } from './sheet-sources.js'
+import { sheetCampaigns, sheetSources } from './sheet-sources.js'
 import { env, frontend, production } from './config.js'
 
 export const log = pino({ level: env.LOG_LEVEL || 'info' })
@@ -41,6 +41,7 @@ app.use((req, res, next) => {
 app.use('/api/v1/auth', auth)
 app.use('/api/v1/workspaces', workspaces)
 app.use('/api/v1/integrations/google-sheets', authenticate, workspaced, sheetSources)
+app.use('/api/v1/campaign-sheets', authenticate, workspaced, sheetCampaigns)
 if (!production) {
   app.use('/api/v1/meta', metaCallback)
   app.use('/api/v1/integrations', authenticate, workspaced, integrations)

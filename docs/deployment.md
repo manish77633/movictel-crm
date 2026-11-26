@@ -14,7 +14,7 @@ Create a Vercel project rooted at `frontend` and set `API_ORIGIN` to the backend
 
 ## Google Sheets lead intake
 
-Create one workspace per Google Sheet. To provision the first admin, set
+Create one workspace per client and connect each campaign sheet inside it. To provision the first admin, set
 `CRM_ADMIN_EMAIL` to a new email address, include it in `GOOGLE_SHEETS_ADMIN_EMAILS`,
 and set `CRM_ADMIN_PASSWORD` to a strong password of at least 12 characters. Deploy
 and log in with those credentials. After the account is created, remove the two
@@ -26,7 +26,7 @@ its email in `GOOGLE_SHEETS_CLIENT_EMAIL` and its PEM private key in
 `GOOGLE_SHEETS_ADMIN_EMAILS` to a comma-separated list of verified agency
 accounts allowed to connect sheets. Set these values on the API and cron process only.
 
-In the sheet's workspace, open **Admin panel → Google Sheets**. Share the
+In the client's workspace, open **Admin panel → Campaign sheets**. Share the
 private spreadsheet with the displayed service account as **Viewer**. Copy the
 URL while the leads tab is selected so the link includes its `gid`. A link
 without a `gid` uses the first tab. The first row must have a stable ID header
@@ -34,16 +34,23 @@ such as `Lead ID` or Meta's `id`, plus a name, phone, or email header. Keep long
 lead IDs as plain text to preserve all digits. Supported Meta headers include
 `full_name`, `phone_number`, `email`, and `campaign_name`.
 
-Connect the link and click **Sync now** to verify the initial import. Later runs
-add new IDs while preserving existing CRM records. Sheet changes and deletions
-are not copied into existing CRM leads. Use one spreadsheet per client.
+Give each sheet a campaign name in the CRM. Click **Sync now** for one sheet
+or **Sync all** for the workspace. Each connection deduplicates its own Lead IDs.
+New rows become leads. Later syncs refresh the original sheet fields in lead details
+and retain CRM statuses, notes, assignments, and edited contact fields.
 
-Use **Admin panel → Client access → Create client account** to set the client's
-credentials and grant access to the current workspace. Switch to another workspace
-and choose **Grant workspace access** to give the same client access to that sheet.
-Use **Revoke access** to remove a client from the selected workspace. Send sign-in
-details to the client privately. Client account creation and Sheets sync do not
-require Resend.
+Use **Admin panel → Client access → Create client account** to create one account
+with access to the current workspace and its campaigns. Existing accounts can be
+added with **Grant workspace access**. The client's dashboard offers **All campaigns**,
+individual campaign filters, and **Refresh leads**. Store phone numbers with
+their country code for WhatsApp links.
+
+The backend checks for sheets due to sync every 30 seconds while it is running.
+Each sheet becomes due five minutes after its last attempt. Manual refresh fetches
+immediately when the sheet is available. If your web service sleeps or stops,
+use an independent job every five minutes for unattended imports. If you configure
+that job, set `SHEETS_AUTO_SYNC=false` on the web service to avoid duplicate reads.
+The web service and scheduled command share the same database leases.
 
 After building the backend, run `npm run sync:sheets -w backend` from the
 repository root to test the scheduled command. On a Hostinger VPS, set the

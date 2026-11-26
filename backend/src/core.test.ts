@@ -9,6 +9,7 @@ import {
   Lead,
   Member,
   User,
+  SheetConnection,
   Automation,
   Execution,
   FacebookPage,
@@ -28,6 +29,7 @@ import {
 } from './security.js'
 import { variablesIn } from './messaging.js'
 import { deliver } from './worker.js'
+import { prepareSheetConnections, syncDueSheets } from './sheet-sources.js'
 
 test('checks signed bytes and rejects tampered webhook bodies', () => {
   const raw = Buffer.from('{"object":"page"}')
@@ -108,6 +110,8 @@ test(
     process.env.LOCAL_SKIP_EMAIL = 'true'
     await mongoose.connect(process.env.TEST_MONGODB_URI!, { dbName })
     await Promise.all(models.map((model) => model.init()))
+    await SheetConnection.collection.createIndex({ workspaceId: 1 }, { unique: true })
+    await prepareSheetConnections()
     const server = createServer(app)
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
@@ -180,6 +184,25 @@ test(
         200,
       )
       const third = await register('Third')
+      const legacySheet = await SheetConnection.create({
+        workspaceId: third.workspace,
+        spreadsheetId: 'legacy-sheet',
+        sheetId: 1,
+        tabName: 'Existing campaign',
+        lastAttemptAt: new Date(),
+      })
+      const legacyLead = await Lead.create({
+        workspaceId: third.workspace,
+        source: 'Google Sheets',
+        externalId: 'legacy-id',
+        name: 'Existing lead',
+        status: 'Interested',
+      })
+      await prepareSheetConnections()
+      const migrated = await Lead.findById(legacyLead.id).lean()
+      assert.equal(migrated?.campaignSheetId, legacySheet.id)
+      assert.equal(migrated?.externalId, 'legacy-id')
+      assert.equal(migrated?.status, 'Interested')
       await Member.create({ workspaceId: first.workspace, userId: third.userId, role: 'client' })
       await Member.create({ workspaceId: second.workspace, userId: first.userId, role: 'admin' })
       const client = { ...third, workspace: first.workspace }
@@ -244,6 +267,7 @@ test(
       }).privateKey
       const networkFetch = globalThis.fetch
       let sheetName = 'Sheet test lead'
+      let appended = false
       globalThis.fetch = async (input, init) => {
         const url = new URL(String(input))
         if (url.hostname === 'oauth2.googleapis.com')
@@ -253,8 +277,11 @@ test(
           assert.ok(decodeURIComponent(url.pathname).endsWith("/values/'Leads'"))
           return Response.json({
             values: [
-              ['id', 'full_name', 'phone_number'],
-              ['l:10000000000000009', sheetName, 'p:+1 (202) 555-0123'],
+              ['id', 'full_name', 'phone_number', 'Preferred location'],
+              ['l:10000000000000009', sheetName, 'p:+1 (202) 555-0123', 'South'],
+              ...(appended && url.pathname.includes('/synthetic-sheet/')
+                ? [['new-lead', 'New sheet row', '+12025550125', 'North']]
+                : []),
             ],
           })
         }
@@ -347,6 +374,61 @@ test(
         assert.equal(stored.row.status, 'Interested')
         assert.equal(stored.row.name, 'Sheet test lead')
         assert.equal(stored.notes[0].text, 'Client note')
+        assert.ok(
+          stored.row.sheetFields.some(
+            (field: { label: string; value: string }) =>
+              field.label === 'Preferred location' && field.value === 'South',
+          ),
+        )
+
+        for (const campaignName of ['Second campaign', 'Third campaign']) {
+          const url =
+            'https://docs.google.com/spreadsheets/d/' +
+            campaignName.replaceAll(' ', '-') +
+            '/edit#gid=9'
+          assert.equal(
+            (
+              await request(sheets, {
+                ...first,
+                method: 'POST',
+                body: { url, campaignName },
+              })
+            ).status,
+            201,
+          )
+        }
+        const list = await (await request('/campaign-sheets', client)).json()
+        assert.equal(list.length, 3)
+        assert.ok(list.every((entry: { spreadsheetId?: string }) => !entry.spreadsheetId))
+        assert.equal((await (await request('/campaign-sheets', second)).json()).length, 0)
+        const imported = await request(sheets + '/sync', { ...client, method: 'POST' })
+        assert.deepEqual(await imported.json(), { imported: 2, skipped: 0 })
+        const combined = await (await request('/leads?source=Google%20Sheets', client)).json()
+        assert.equal(combined.total, 3)
+        assert.equal(
+          new Set(combined.rows.map((lead: { campaignSheetId: string }) => lead.campaignSheetId))
+            .size,
+          3,
+        )
+        const filtered = await (
+          await request('/dashboard/overview?campaignSheetId=' + list[1]._id, client)
+        ).json()
+        assert.equal(filtered.recent.length, 1)
+        assert.equal(filtered.recent[0].campaignSheetName, 'Second campaign')
+
+        appended = true
+        await SheetConnection.updateOne(
+          { spreadsheetId: 'synthetic-sheet' },
+          {
+            lastAttemptAt: new Date(Date.now() - 5 * 60_000 - 1000),
+          },
+        )
+        await syncDueSheets((message) => assert.fail(message))
+        const refreshed = await (
+          await request('/leads?campaignSheetId=' + list[0]._id, client)
+        ).json()
+        assert.equal(refreshed.total, 2)
+        assert.ok(refreshed.rows.some((lead: { name: string }) => lead.name === 'New sheet row'))
       } finally {
         globalThis.fetch = networkFetch
       }

@@ -29,17 +29,19 @@ const leadsFilter = z.object({
   source: z.string().max(80).optional(),
   assignedTo: id.optional(),
   campaign: z.string().max(160).optional(),
+  campaignSheetId: id.optional(),
   page: z.coerce.number().int().min(1).max(10000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   sort: z.enum(['newest', 'oldest', 'name']).default('newest'),
 })
 function filteredLeads(req: Request, query: z.infer<typeof leadsFilter>) {
-  const { q, status, source, assignedTo, campaign } = query
+  const { q, status, source, assignedTo, campaign, campaignSheetId } = query
   const filter = {
     ...leadFilter(req),
     ...(status && { status }),
     ...(source && { source }),
     ...(campaign && { campaign }),
+    ...(campaignSheetId && { campaignSheetId }),
   }
   const regex = q ? new RegExp(escape(q), 'i') : undefined
   return {
@@ -59,6 +61,7 @@ crm.get('/leads', async (req, res) => {
         : '-createdAt -_id'
   const [rows, total] = await Promise.all([
     Lead.find(filter)
+      .select('-sheetFields')
       .sort(sort)
       .skip((query.page - 1) * query.limit)
       .limit(query.limit)
@@ -69,6 +72,7 @@ crm.get('/leads', async (req, res) => {
 })
 crm.get('/leads/export', async (req, res) => {
   const rows = await Lead.find(filteredLeads(req, leadsFilter.parse(req.query)))
+    .select('name phone email company source campaign campaignSheetName status')
     .sort('-createdAt')
     .limit(10_000)
     .lean()
@@ -90,9 +94,19 @@ crm.get('/leads/export', async (req, res) => {
     .type('text/csv')
     .send(
       [
-        'Name,Phone,Email,Company,Source,Status',
+        'Name,Phone,Email,Company,Source,Campaign,Status',
         ...rows.map((row) =>
-          [row.name, row.phone, row.email, row.company, row.source, row.status].map(csv).join(','),
+          [
+            row.name,
+            row.phone,
+            row.email,
+            row.company,
+            row.source,
+            row.campaignSheetName || row.campaign,
+            row.status,
+          ]
+            .map(csv)
+            .join(','),
         ),
       ].join('\r\n'),
     )
@@ -298,7 +312,11 @@ crm.get(['/dashboard/overview', '/dashboard/analytics'], async (req, res) => {
         $facet: {
           stages: [{ $group: { _id: '$status', count: { $sum: 1 } } }],
           sources: [{ $group: { _id: '$source', count: { $sum: 1 } } }],
-          campaigns: [{ $group: { _id: '$campaign', count: { $sum: 1 } } }],
+          campaigns: [
+            {
+              $group: { _id: { $ifNull: ['$campaignSheetName', '$campaign'] }, count: { $sum: 1 } },
+            },
+          ],
           forms: [{ $group: { _id: '$formId', count: { $sum: 1 } } }],
           team: [{ $group: { _id: '$assignedTo', count: { $sum: 1 } } }],
           dates: [
@@ -322,7 +340,7 @@ crm.get(['/dashboard/overview', '/dashboard/analytics'], async (req, res) => {
         },
       },
     ]),
-    Lead.find(filter).sort('-createdAt').limit(8).lean(),
+    Lead.find(filter).select('-sheetFields').sort('-createdAt').limit(8).lean(),
   ])
   const conversations =
     req.role === 'agent'

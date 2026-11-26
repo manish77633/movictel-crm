@@ -41,7 +41,7 @@ function Card({ row, open, move }: { row: Lead; open: () => void; move: (s: Stag
           <GripVertical size={15} />
         </button>
       </div>
-      <p>{row.campaign || row.phone || 'Manual lead'}</p>
+      <p>{row.campaignSheetName || row.campaign || row.phone || 'Manual lead'}</p>
       <Source name={row.source} />
       <select
         aria-label={'Stage for ' + row.name}
