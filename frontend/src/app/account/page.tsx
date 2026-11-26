@@ -6,7 +6,6 @@ import { Suspense, useState, type FormEvent } from 'react'
 import { api } from '../../lib/api'
 
 const titles: Record<string, string> = {
-  register: 'Create your workspace',
   login: 'Welcome back',
   forgot: 'Reset your password',
   reset: 'Choose a new password',
@@ -44,10 +43,7 @@ function AccountForm() {
       else if (mode === 'forgot')
         setInfo('If the account exists, check your email for a reset link.')
       else if (mode === 'reset') router.push('/account')
-      else
-        router.push(
-          '/workspace' + (mode === 'register' || mode === 'verify' ? '?onboarding=1' : ''),
-        )
+      else router.push('/workspace')
     } catch (error) {
       setError((error as Error).message)
     } finally {
@@ -63,31 +59,19 @@ function AccountForm() {
       <section className="surface">
         <h1>{titles[mode]}</h1>
         <form onSubmit={submit} className="form">
-          {mode === 'register' && (
-            <>
-              <label>
-                Full name
-                <input required name="name" autoComplete="name" />
-              </label>
-              <label>
-                Business name
-                <input required name="business" autoComplete="organization" />
-              </label>
-            </>
-          )}
           {mode === 'invite' && (
             <label>
               Full name
               <input required name="name" autoComplete="name" />
             </label>
           )}
-          {['register', 'login', 'forgot'].includes(mode) && (
+          {['login', 'forgot'].includes(mode) && (
             <label>
               Email
               <input type="email" name="email" autoComplete="email" required />
             </label>
           )}
-          {['register', 'login', 'reset', 'invite'].includes(mode) && (
+          {['login', 'reset', 'invite'].includes(mode) && (
             <label>
               Password
               <input
@@ -112,10 +96,7 @@ function AccountForm() {
         </form>
         <div className="account-links">
           {mode === 'login' ? (
-            <>
-              <Link href="/account?mode=forgot">Forgot password?</Link>
-              <Link href="/account?mode=register">Create an account</Link>
-            </>
+            <p>Contact your CRM admin for account access.</p>
           ) : (
             <Link href="/account">Back to log in</Link>
           )}

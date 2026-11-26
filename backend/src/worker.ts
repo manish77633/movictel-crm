@@ -13,7 +13,7 @@ import {
   WebhookEvent,
   Workspace,
 } from './models.js'
-import { required } from './config.js'
+import { production, required } from './config.js'
 import { processEvent } from './incoming.js'
 import { graph } from './graph.js'
 import { ensureChat, outbound, whatsapp } from './messaging.js'
@@ -148,7 +148,7 @@ async function execute(executionId: string) {
     return
   }
   if (rule.action === 'template') {
-    if (!lead.phone || lead.consent !== 'granted') {
+    if (production || !lead.phone || lead.consent !== 'granted') {
       await Execution.updateOne(scope, { status: 'cancelled' })
       return
     }
@@ -240,8 +240,8 @@ export async function startWorker() {
   const worker = new Worker(
     'relay-jobs',
     async (job) => {
-      if (job.name === 'event') await processEvent(job.data.id)
-      if (job.name === 'send') await deliver(job.data.id)
+      if (!production && job.name === 'event') await processEvent(job.data.id)
+      if (!production && job.name === 'send') await deliver(job.data.id)
       if (job.name === 'automation') await execute(job.data.id)
     },
     { connection, concurrency: 5, limiter: { max: 10, duration: 1000 } },
@@ -273,8 +273,12 @@ export async function startWorker() {
       { status: 'unknown' },
     )
     const [events, messages, executions, tasks] = await Promise.all([
-      WebhookEvent.find({ status: 'pending' }).sort('createdAt').select('_id').limit(100),
-      Message.find({ status: 'queued' }).sort('createdAt').select('_id').limit(100),
+      production
+        ? []
+        : WebhookEvent.find({ status: 'pending' }).sort('createdAt').select('_id').limit(100),
+      production
+        ? []
+        : Message.find({ status: 'queued' }).sort('createdAt').select('_id').limit(100),
       Execution.find({ status: 'pending', dueAt: { $lte: time } })
         .sort('dueAt')
         .select('_id')

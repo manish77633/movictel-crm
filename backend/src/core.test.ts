@@ -8,6 +8,7 @@ import {
   models,
   Lead,
   Member,
+  User,
   Automation,
   Execution,
   FacebookPage,
@@ -185,6 +186,56 @@ test(
       const sheets = '/integrations/google-sheets'
       const sheetLink = { url: 'https://docs.google.com/spreadsheets/d/synthetic-sheet/edit#gid=9' }
       process.env.GOOGLE_SHEETS_ADMIN_EMAILS = 'first@example.test'
+      const clientAccount = {
+        action: 'create',
+        email: 'managed-client@example.test',
+        name: 'Managed client',
+        password: 'synthetic-client-password',
+      }
+      const createClient = { method: 'POST', body: clientAccount }
+      assert.equal((await request('/team/clients', { ...client, ...createClient })).status, 403)
+      assert.equal((await request('/team/clients', { ...first, ...createClient })).status, 201)
+      const signedIn = await request('/auth/login', createClient)
+      assert.equal(signedIn.status, 200)
+      const managed = { cookies: cookieFrom(signedIn.headers) }
+      assert.equal(
+        (await request('/leads', { ...managed, workspace: first.workspace })).status,
+        200,
+      )
+      assert.equal(
+        (await request('/leads', { ...managed, workspace: second.workspace })).status,
+        403,
+      )
+      const otherWorkspace = { ...first, workspace: second.workspace }
+      assert.equal(
+        (
+          await request('/team/clients', {
+            ...otherWorkspace,
+            method: 'POST',
+            body: { action: 'grant', email: clientAccount.email },
+          })
+        ).status,
+        201,
+      )
+      assert.equal(
+        (await request('/leads', { ...managed, workspace: second.workspace })).status,
+        200,
+      )
+      const managedUser = await User.findOne({ email: clientAccount.email })
+      const managedMembership = await Member.findOne({
+        userId: managedUser?.id,
+        workspaceId: second.workspace,
+      })
+      assert.ok(managedMembership)
+      assert.equal(
+        (await request('/team/' + managedMembership.id, { ...otherWorkspace, method: 'DELETE' }))
+          .status,
+        200,
+      )
+      assert.equal(
+        (await request('/leads', { ...managed, workspace: second.workspace })).status,
+        403,
+      )
       process.env.GOOGLE_SHEETS_CLIENT_EMAIL = 'synthetic@example.test'
       process.env.GOOGLE_SHEETS_PRIVATE_KEY = generateKeyPairSync('rsa', {
         modulusLength: 2048,

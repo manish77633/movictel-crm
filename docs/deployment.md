@@ -6,20 +6,19 @@ Create a MongoDB Atlas replica set and a managed Redis instance with a no-evicti
 
 ## Backend
 
-On Railway or Render, install the monorepo with `npm ci`, build with `npm run build -w backend`, and start using `npm run start -w backend`. Set `NODE_ENV=production`, enable `TRUST_PROXY=1` when one trusted platform proxy sits in front of Express, and use `/api/v1/health` as the readiness endpoint. The API process runs one BullMQ worker by default. Start with one API replica, since Socket.IO events are published in process. Configure the email and Meta secrets from `.env.example` as applicable.
+On Railway or Render, install the monorepo with `npm ci`, build with `npm run build -w backend`, and start using `npm run start -w backend`. Set `NODE_ENV=production`, enable `TRUST_PROXY=1` when one trusted platform proxy sits in front of Express, and use `/api/v1/health` as the readiness endpoint. The API process runs one BullMQ worker by default. Start with one API replica, since Socket.IO events are published in process. Configure the admin and Google Sheets variables listed below.
 
 ## Frontend
 
-Create a Vercel project rooted at `frontend` and set `API_ORIGIN` to the backend’s HTTPS origin. The Next.js config forwards API and Socket.IO polling requests to the backend. Set `FRONTEND_ORIGIN` and `PUBLIC_API_ORIGIN` on the backend to the browser-facing Vercel or custom domain. Confirm proxied cookies and Socket.IO polling in staging. Register Meta webhook URLs over public HTTPS and configure the Facebook callback on the browser-facing hostname.
+Create a Vercel project rooted at `frontend` and set `API_ORIGIN` to the backend’s HTTPS origin. The Next.js config forwards API and Socket.IO polling requests to the backend. Set `FRONTEND_ORIGIN` and `PUBLIC_API_ORIGIN` on the backend to the browser-facing Vercel or custom domain. Confirm proxied cookies and Socket.IO polling in staging.
 
-Run the staging acceptance checks in [Meta setup](meta.md) before handling real customer records.
 ## Google Sheets lead intake
 
-Create a workspace for each client using the agency account. The creating account
-is the owner and can switch between its client workspaces. Invite client users
-with the **Client** role. Invite other agency staff as **Admin** in each workspace
-they manage. Client users can view and work with the leads in their workspace.
-The Agent role continues to see only assigned leads.
+Create one workspace per Google Sheet. To provision the first admin, set
+`CRM_ADMIN_EMAIL` to a new email address, include it in `GOOGLE_SHEETS_ADMIN_EMAILS`,
+and set `CRM_ADMIN_PASSWORD` to a strong password of at least 12 characters. Deploy
+and log in with those credentials. After the account is created, remove the two
+`CRM_ADMIN_*` bootstrap variables and keep the email in the allowlist.
 
 Enable the Google Sheets API in Google Cloud and create a service account. Put
 its email in `GOOGLE_SHEETS_CLIENT_EMAIL` and its PEM private key in
@@ -27,7 +26,7 @@ its email in `GOOGLE_SHEETS_CLIENT_EMAIL` and its PEM private key in
 `GOOGLE_SHEETS_ADMIN_EMAILS` to a comma-separated list of verified agency
 accounts allowed to connect sheets. Set these values on the API and cron process only.
 
-In the client's workspace, open **Integrations → Google Sheets**. Share the
+In the sheet's workspace, open **Admin panel → Google Sheets**. Share the
 private spreadsheet with the displayed service account as **Viewer**. Copy the
 URL while the leads tab is selected so the link includes its `gid`. A link
 without a `gid` uses the first tab. The first row must have a stable ID header
@@ -38,6 +37,13 @@ lead IDs as plain text to preserve all digits. Supported Meta headers include
 Connect the link and click **Sync now** to verify the initial import. Later runs
 add new IDs while preserving existing CRM records. Sheet changes and deletions
 are not copied into existing CRM leads. Use one spreadsheet per client.
+
+Use **Admin panel → Client access → Create client account** to set the client's
+credentials and grant access to the current workspace. Switch to another workspace
+and choose **Grant workspace access** to give the same client access to that sheet.
+Use **Revoke access** to remove a client from the selected workspace. Send sign-in
+details to the client privately. Client account creation and Sheets sync do not
+require Resend.
 
 After building the backend, run `npm run sync:sheets -w backend` from the
 repository root to test the scheduled command. On a Hostinger VPS, set the

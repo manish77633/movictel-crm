@@ -123,14 +123,6 @@ export function LeadFields({ row }: { row?: Lead }) {
             ))}
           </select>
         </label>
-        <label>
-          WhatsApp consent
-          <select name="consent" defaultValue={row?.consent ?? 'unknown'}>
-            <option value="unknown">Unknown</option>
-            <option value="granted">Explicit opt-in recorded</option>
-            <option value="opted_out">Opted out</option>
-          </select>
-        </label>
       </div>
       <label>
         Tags

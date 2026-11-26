@@ -16,6 +16,7 @@ import {
   type Activity,
 } from '../lib/demo'
 export type Account = {
+  canAdministerSheets: boolean
   user: { _id: string; name: string; email: string }
   rows: { _id: string; name: string; role: string; timezone: string }[]
 }
@@ -215,41 +216,34 @@ export function useWorkspace(demo: boolean) {
       socket.disconnect()
     }
   }, [demo, scope, client])
+  async function refreshWorkspace() {
+    await client.invalidateQueries({ queryKey: ['workspace', scope] })
+  }
+  async function createWorkspace(name: string) {
+    const created = await api<{ _id: string }>('/workspaces', undefined, 'POST', { name })
+    await client.invalidateQueries({ queryKey: ['account'] })
+    setSelected(created._id)
+  }
   async function mutate(path: string, method: string, body: Record<string, unknown> = {}) {
     if (demo) {
       setData(demoRequest(data, path, method, body))
       return
     }
     await api(path, scope, method, body)
-    await client.invalidateQueries({ queryKey: ['workspace', scope] })
+    await refreshWorkspace()
     if (path.startsWith('/workspaces')) await client.invalidateQueries({ queryKey: ['account'] })
   }
-  function simulateLead() {
-    const id = uid(),
-      createdAt = now()
-    setData((current) => ({
-      ...current,
-      leads: [
-        {
-          _id: id,
-          name: 'Jamie Rivera',
-          company: 'Cedar Properties',
-          phone: '+12025550153',
-          source: 'Facebook',
-          campaign: 'Property inquiry',
-          status: 'New',
-          consent: 'granted',
-          createdAt,
-        },
-        ...current.leads,
-      ],
-      activities: [
-        { _id: uid(), leadId: id, detail: 'Simulated Facebook lead received', createdAt },
-        ...current.activities,
-      ],
-    }))
+  return {
+    data,
+    account,
+    workspace,
+    scope,
+    selected,
+    setSelected,
+    mutate,
+    createWorkspace,
+    refreshWorkspace,
   }
-  return { data, account, workspace, scope, selected, setSelected, mutate, simulateLead }
 }
 export function useApi<T>(scope: string | undefined, path: string, enabled = true) {
   return useQuery({

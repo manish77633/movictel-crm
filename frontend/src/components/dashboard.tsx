@@ -163,13 +163,6 @@ export function Dashboard({
   const count = (name: string) => current.stages.find((item) => item._id === name)?.count || 0
   const total = current.stages.reduce((sum, item) => sum + item.count, 0)
   const today = new Date().toISOString().slice(0, 10)
-  const messagesSent = current.messages
-    .filter((item) => ['sent', 'delivered', 'read', 'simulated'].includes(item._id || ''))
-    .reduce((sum, item) => sum + item.count, 0)
-  const responseMins =
-    current.response?.[0] === undefined
-      ? undefined
-      : Math.round(current.response[0].average / 60000)
   const metrics = [
     ['Total leads', total, UsersRound],
     ['Uncontacted', count('New'), CircleDot],
@@ -183,16 +176,6 @@ export function Dashboard({
       ? ([
           ['New today', current.dates.find((row) => row._id === today)?.count || 0, CalendarDays],
           ['Converted', count('Converted'), ArrowUpRight],
-          ['Messages sent', messagesSent, MessageCircle],
-          [
-            'Avg. first response',
-            responseMins === undefined
-              ? '—'
-              : responseMins < 60
-                ? responseMins + 'm'
-                : (responseMins / 60).toFixed(1) + 'h',
-            CircleDot,
-          ],
         ] as const)
       : []),
   ] as const
@@ -317,29 +300,12 @@ export function Dashboard({
                 ))}
               </ul>
             </section>
-            <section className="surface">
-              <header>
-                <h2>Message outcomes</h2>
-              </header>
-              {current.messages.length ? (
-                <ul className="row-list">
-                  {current.messages.map((item) => (
-                    <li key={item._id}>
-                      <span>{item._id}</span>
-                      {item.count}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="empty">No outbound messages within this range.</div>
-              )}
-            </section>
           </div>
           <div className="dashboard-grid">
             {(
               [
                 ['Leads by campaign', current.campaigns],
-                ['Leads by form', current.forms],
+                ['Leads by source', current.sources],
               ] as const
             ).map(([label, rows]) => (
               <section className="surface" key={label}>

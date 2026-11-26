@@ -8,11 +8,15 @@ import { parseSheetLink, readSheet, resolveSheet } from './google-sheets.js'
 export const sheetSources = Router()
 const source = 'Google Sheets'
 
-export async function isSheetAdmin(userId: string) {
-  const addresses = (env.GOOGLE_SHEETS_ADMIN_EMAILS || '')
+export function sheetAdminEmails() {
+  return (env.GOOGLE_SHEETS_ADMIN_EMAILS || '')
     .split(',')
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean)
+}
+
+export async function isSheetAdmin(userId: string) {
+  const addresses = sheetAdminEmails()
   return (
     addresses.length > 0 &&
     Boolean(await User.exists({ _id: userId, verified: true, email: { $in: addresses } }))

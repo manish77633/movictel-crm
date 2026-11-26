@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express'
 import { z } from 'zod'
+import mongoose from 'mongoose'
 import {
   Activity,
   Conversation,
@@ -13,10 +14,11 @@ import {
   User,
 } from './models.js'
 import { failure, leadFilter, manager, publish, record, schedule, visibleLead } from './runtime.js'
-import { email, followUp, id, lead, role, statuses } from './validation.js'
-import { digest, randomToken } from './security.js'
+import { email, followUp, id, lead, line, password, role, statuses } from './validation.js'
+import { digest, passwordHash, randomToken } from './security.js'
+import { isSheetAdmin, sheetAdminEmails } from './sheet-sources.js'
 import { sendEmail } from './auth.js'
-import { frontend } from './config.js'
+import { frontend, production } from './config.js'
 
 export const crm = Router()
 const leadInput = lead.partial()
@@ -351,7 +353,45 @@ crm.get('/team', async (req, res) => {
     rows.map((row) => ({ ...row, user: users.find((user) => String(user._id) === row.userId) })),
   )
 })
+crm.post('/team/clients', async (req, res) => {
+  manager(req)
+  if (!(await isSheetAdmin(req.userId))) return failure(403, 'Only a CRM admin can add clients.')
+  const input = z
+    .discriminatedUnion('action', [
+      z.object({ action: z.literal('create'), email, name: line, password }),
+      z.object({ action: z.literal('grant'), email }),
+    ])
+    .parse(req.body)
+  if (sheetAdminEmails().includes(input.email)) return failure(409, 'Use a client email address.')
+  await mongoose.connection.transaction(async (session) => {
+    let user = await User.findOne({ email: input.email }).session(session)
+    if (input.action === 'create') {
+      if (user)
+        return failure(409, 'This email already has an account. Use Grant workspace access.')
+      const [created] = await User.create(
+        [
+          {
+            email: input.email,
+            name: input.name,
+            password: passwordHash(input.password),
+            verified: true,
+          },
+        ],
+        { session },
+      )
+      user = created
+    }
+    if (!user?.verified) return failure(404, 'No active account uses this email.')
+    await Member.updateOne(
+      { workspaceId: req.workspaceId, userId: user.id },
+      { $setOnInsert: { role: 'client' } },
+      { upsert: true, session },
+    )
+  })
+  res.status(201).json({ ok: true })
+})
 crm.post('/team/invite', async (req, res) => {
+  if (production) return failure(404, 'Use the admin panel to create client accounts.')
   if (req.role !== 'owner') return failure(403, 'Only an owner can invite members.')
   const input = z.object({ email, role }).parse(req.body)
   const token = randomToken()
@@ -379,11 +419,13 @@ crm.patch('/team/:id', async (req, res) => {
   res.json(row)
 })
 crm.delete('/team/:id', async (req, res) => {
-  if (req.role !== 'owner') return failure(403, 'Only an owner can remove members.')
+  manager(req)
+  if (req.role !== 'owner' && !(await isSheetAdmin(req.userId)))
+    return failure(403, 'Only a CRM admin can remove clients.')
   const row = await Member.findOneAndDelete({
     _id: id.parse(req.params.id),
     workspaceId: req.workspaceId,
-    role: { $ne: 'owner' },
+    role: req.role === 'owner' ? { $ne: 'owner' } : 'client',
   })
   if (!row) return failure(404, 'Member not found.')
   if (row.userId) {

@@ -6,10 +6,12 @@ import { env, frontend, required } from './config.js'
 import { Member, models } from './models.js'
 import { readAccess, registerSockets } from './runtime.js'
 import { startWorker } from './worker.js'
+import { bootstrapAdmin } from './auth.js'
 
 required('ACCESS_SECRET')
 await mongoose.connect(required('MONGODB_URI'))
 await Promise.all(models.map((model) => model.init()))
+await bootstrapAdmin()
 const server = createServer(app)
 const io = new Server(server, {
   allowRequest: (req, done) => done(null, !req.headers.origin || req.headers.origin === frontend),

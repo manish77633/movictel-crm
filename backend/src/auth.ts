@@ -3,7 +3,8 @@ import { rateLimit } from 'express-rate-limit'
 import { z } from 'zod'
 import mongoose from 'mongoose'
 import { AccountToken, Invitation, Member, Session, User, Workspace } from './models.js'
-import { cookie, env, frontend, required } from './config.js'
+import { cookie, env, frontend, production, required } from './config.js'
+import { isSheetAdmin, sheetAdminEmails } from './sheet-sources.js'
 import { digest, passwordHash, randomToken, validPassword } from './security.js'
 import { accessCookie, accessToken, authenticate, failure, manager, workspaced } from './runtime.js'
 import { email, line, password } from './validation.js'
@@ -51,6 +52,7 @@ async function sendAccountLink(userId: string, address: string, purpose: string)
   )
 }
 auth.post('/register', async (req, res) => {
+  if (production) return failure(403, 'Ask your CRM admin to create an account for you.')
   const input = z.object({ name: line, business: line, email, password }).parse(req.body)
   const verify = env.NODE_ENV === 'production' || env.LOCAL_SKIP_EMAIL !== 'true'
   if (verify) {
@@ -195,6 +197,7 @@ workspaces.get('/', authenticate, async (req, res) => {
   const user = await User.findById(req.userId).select('name email').lean()
   res.json({
     user,
+    canAdministerSheets: await isSheetAdmin(req.userId),
     rows: rows.map((row) => ({
       ...row,
       role: memberships.find((member) => member.workspaceId === String(row._id))?.role,
@@ -202,6 +205,8 @@ workspaces.get('/', authenticate, async (req, res) => {
   })
 })
 workspaces.post('/', authenticate, async (req, res) => {
+  if (!(await isSheetAdmin(req.userId)))
+    return failure(403, 'Only a CRM admin can create workspaces.')
   const name = line.parse(req.body.name)
   const workspace = await mongoose.connection.transaction(async (session) => {
     const [row] = await Workspace.create([{ name, timezone: 'UTC' }], { session })
@@ -212,6 +217,23 @@ workspaces.post('/', authenticate, async (req, res) => {
   })
   res.status(201).json(workspace)
 })
+
+export async function bootstrapAdmin() {
+  if (!env.CRM_ADMIN_EMAIL && !env.CRM_ADMIN_PASSWORD) return
+  const address = email.parse(required('CRM_ADMIN_EMAIL'))
+  if (!sheetAdminEmails().includes(address))
+    throw new Error('CRM_ADMIN_EMAIL must be listed in GOOGLE_SHEETS_ADMIN_EMAILS.')
+  const secret = password.parse(required('CRM_ADMIN_PASSWORD'))
+  const user = await User.findOneAndUpdate(
+    { email: address },
+    { $setOnInsert: { name: 'CRM Admin', password: passwordHash(secret), verified: true } },
+    { upsert: true, new: true },
+  )
+  if (!user.verified || !user.password || !validPassword(secret, user.password))
+    throw new Error(
+      'The bootstrap admin email belongs to an account with different credentials or an unverified account.',
+    )
+}
 workspaces.get('/:id', authenticate, workspaced, async (req, res) => {
   if (req.params.id !== req.workspaceId) return failure(404, 'Workspace not found.')
   res.json(await Workspace.findById(req.workspaceId))

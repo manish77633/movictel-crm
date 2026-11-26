@@ -12,7 +12,7 @@ import { webhooks } from './webhooks.js'
 import { integrations, metaCallback } from './integrations.js'
 import { authenticate, workspaced } from './runtime.js'
 import { sheetSources } from './sheet-sources.js'
-import { env, frontend } from './config.js'
+import { env, frontend, production } from './config.js'
 
 export const log = pino({ level: env.LOG_LEVEL || 'info' })
 export const app = express()
@@ -23,7 +23,8 @@ app.get('/api/v1/health', (_req, res) => {
   const ready = mongoose.connection.readyState === 1
   res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' })
 })
-app.use('/api/v1/webhooks', express.raw({ type: 'application/json', limit: '512kb' }), webhooks)
+if (!production)
+  app.use('/api/v1/webhooks', express.raw({ type: 'application/json', limit: '512kb' }), webhooks)
 app.use(express.json({ limit: '64kb' }), cookieParser())
 app.use((req, res, next) => {
   const origin = req.header('origin')
@@ -39,11 +40,14 @@ app.use((req, res, next) => {
 })
 app.use('/api/v1/auth', auth)
 app.use('/api/v1/workspaces', workspaces)
-app.use('/api/v1/meta', metaCallback)
 app.use('/api/v1/integrations/google-sheets', authenticate, workspaced, sheetSources)
-app.use('/api/v1/integrations', authenticate, workspaced, integrations)
-app.use('/api/v1/conversations', authenticate, workspaced, conversations)
-app.use('/api/v1', authenticate, workspaced, rules, crm)
+if (!production) {
+  app.use('/api/v1/meta', metaCallback)
+  app.use('/api/v1/integrations', authenticate, workspaced, integrations)
+  app.use('/api/v1/conversations', authenticate, workspaced, conversations)
+  app.use('/api/v1', authenticate, workspaced, rules)
+}
+app.use('/api/v1', authenticate, workspaced, crm)
 app.use((_req, res) => {
   res.status(404).json({ error: 'Endpoint not found.' })
 })

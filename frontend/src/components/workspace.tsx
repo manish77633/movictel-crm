@@ -16,15 +16,11 @@ import {
   Columns3,
   LogOut,
   Menu,
-  MessageCircle,
   PanelLeftClose,
   Plus,
   Search,
   Settings,
   UsersRound,
-  Zap,
-  Plug,
-  FileText,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import {
@@ -34,26 +30,21 @@ import {
   type Stage,
   type Report,
   type Task,
-  type Chat,
   type Activity,
 } from '../lib/demo'
 import { Avatar, Dashboard, LeadTable, Status, shortDate } from './dashboard'
 import { Pipeline } from './pipeline'
 import { useApi, useWorkspace, type LeadDetails, type Member } from './workspace-data'
 import { ActionForm, Dialog, Empty, FollowUpFields, LeadFields } from './crm-forms'
-import { Integrations, Inbox, Templates, Automations } from './workflows'
+import { GoogleSheets } from './google-sheets'
 
 const navigation = [
   ['Overview', LayoutDashboard],
   ['Leads', ContactRound],
   ['Pipeline', Columns3],
-  ['Inbox', MessageCircle],
-  ['Automations', Zap],
-  ['Templates', FileText],
   ['Follow-ups', CalendarDays],
   ['Analytics', ChartNoAxesCombined],
-  ['Integrations', Plug],
-  ['Team', UsersRound],
+  ['Admin panel', UsersRound],
   ['Settings', Settings],
 ] as const
 type View = (typeof navigation)[number][0]
@@ -92,8 +83,8 @@ function WorkspaceContent() {
   const router = useRouter()
   const demo = params.get('demo') === '1'
   const requested = params.get('view')
-  const [view, setView] = useState<View>(
-    () => navigation.find(([name]) => name === requested)?.[0] || 'Overview',
+  const [requestedView, setView] = useState<View | undefined>(
+    () => navigation.find(([name]) => name === requested)?.[0],
   )
   const [drawer, setDrawer] = useState(false),
     [collapsed, setCollapsed] = useState(false)
@@ -112,13 +103,16 @@ function WorkspaceContent() {
     [from, setFrom] = useState(''),
     [to, setTo] = useState('')
   const [taskTab, setTaskTab] = useState('Upcoming')
-  const [onboarding, setOnboarding] = useState(params.get('onboarding') === '1' ? 1 : 0)
-  const [selectedChat, setSelectedChat] = useState('')
   const [rescheduling, setRescheduling] = useState<Task>()
   const state = useWorkspace(demo)
   const { data, scope, workspace, account, mutate } = state
   const canManage = demo || workspace?.role === 'owner' || workspace?.role === 'admin'
-  const owner = demo || workspace?.role === 'owner'
+  const crmAdmin = !!account.data?.canAdministerSheets
+  const adminPanel = crmAdmin && canManage
+  const view =
+    requestedView === 'Admin panel' && !adminPanel
+      ? 'Overview'
+      : (requestedView ?? (adminPanel ? 'Admin panel' : 'Overview'))
   useEffect(() => {
     const timer = setTimeout(() => {
       setQuery(search)
@@ -253,21 +247,6 @@ function WorkspaceContent() {
     setDialog('')
     setSelectedLead('')
   }
-  async function openConversation(lead: Lead, chat?: Chat) {
-    if (chat) {
-      setSelectedChat(chat._id)
-      go('Inbox')
-      return
-    }
-    if (demo) {
-      await mutate('/conversations', 'POST', { leadId: lead._id })
-      setSelectedChat('')
-    } else {
-      const created = await api<Chat>('/conversations', scope, 'POST', { leadId: lead._id })
-      setSelectedChat(created._id)
-    }
-    go('Inbox')
-  }
   async function change(
     path: string,
     method: string,
@@ -321,7 +300,9 @@ function WorkspaceContent() {
               ? 'Loading workspace…'
               : account.isError
                 ? 'Sign in to your workspace'
-                : 'Create a workspace'}
+                : crmAdmin
+                  ? 'Admin panel'
+                  : 'No workspace access'}
           </h1>
           {account.isError && (
             <>
@@ -331,19 +312,27 @@ function WorkspaceContent() {
               </Link>
             </>
           )}
-          {account.data && !account.data.rows.length && (
-            <ActionForm
-              onSave={async (input) => {
-                await change('/workspaces', 'POST', input)
-                setOnboarding(1)
-              }}
-            >
-              <label>
-                Workspace name
-                <input name="name" required />
-              </label>
-            </ActionForm>
+          {crmAdmin && account.data && !account.data.rows.length && (
+            <>
+              <p>
+                Create a workspace for your first sheet. Then connect the sheet and grant client
+                access.
+              </p>
+              <ActionForm
+                label="Create workspace"
+                onSave={async (input) => {
+                  await state.createWorkspace(input.name)
+                  go('Admin panel')
+                }}
+              >
+                <label>
+                  Workspace name
+                  <input name="name" required />
+                </label>
+              </ActionForm>
+            </>
           )}
+          {account.data && !crmAdmin && <p>Ask your CRM admin to grant workspace access.</p>}
           <Link className="text-button" href="/workspace?demo=1">
             Open the interactive demo
           </Link>
@@ -388,21 +377,23 @@ function WorkspaceContent() {
           <ChevronsUpDown size={14} />
         </button>
         <nav aria-label="Workspace">
-          {navigation.map(([name, Icon]) => (
-            <button
-              key={name}
-              className={view === name ? 'selected' : ''}
-              aria-current={view === name ? 'page' : undefined}
-              title={name}
-              onClick={() => {
-                setSearch('')
-                go(name)
-              }}
-            >
-              <Icon size={17} />
-              <span>{name}</span>
-            </button>
-          ))}
+          {navigation
+            .filter(([name]) => name !== 'Admin panel' || adminPanel)
+            .map(([name, Icon]) => (
+              <button
+                key={name}
+                className={view === name ? 'selected' : ''}
+                aria-current={view === name ? 'page' : undefined}
+                title={name}
+                onClick={() => {
+                  setSearch('')
+                  go(name)
+                }}
+              >
+                <Icon size={17} />
+                <span>{name}</span>
+              </button>
+            ))}
         </nav>
         <div className="sidebar-footer">
           <button onClick={() => setDialog('help')} title="Help">
@@ -473,532 +464,414 @@ function WorkspaceContent() {
           </div>
         </header>
         <main className="app-content">
-          {onboarding > 0 ? (
-            <section className="onboarding surface">
-              <p>Step {onboarding} of 5</p>
-              <progress max={5} value={onboarding} />
-              <h1>
-                {
-                  [
-                    '',
-                    'Business information',
-                    'Connect Facebook Lead Ads',
-                    'Connect WhatsApp Business',
-                    'Configure a welcome message',
-                    'Open your dashboard',
-                  ][onboarding]
-                }
-              </h1>
-              {onboarding === 1 && workspace && (
-                <ActionForm
-                  label="Save business information"
-                  onSave={async (input) => {
-                    await change('/workspaces/' + scope, 'PATCH', input)
-                    setOnboarding(2)
-                  }}
-                >
-                  <label>
-                    Business name
-                    <input name="name" defaultValue={workspace.name} required />
-                  </label>
-                  <label>
-                    Timezone
-                    <input name="timezone" defaultValue={workspace.timezone} />
-                  </label>
-                </ActionForm>
-              )}
-              {(onboarding === 2 || onboarding === 3) && (
-                <Integrations
-                  demo={demo}
-                  scope={scope}
-                  canManage={canManage}
-                  change={change}
-                  simulate={state.simulateLead}
-                />
-              )}
-              {onboarding === 4 && (
-                <Automations
-                  demo={demo}
-                  scope={scope}
-                  data={data}
-                  change={change}
-                  canManage={canManage}
-                />
-              )}
-              <button
-                className="button"
-                onClick={() => setOnboarding(onboarding === 5 ? 0 : onboarding + 1)}
-              >
-                {onboarding === 5
-                  ? 'Open dashboard'
-                  : onboarding === 1
-                    ? 'Continue'
-                    : 'Continue / skip'}
-              </button>
-            </section>
-          ) : (
+          {(view === 'Overview' || view === 'Analytics') && (
             <>
-              {(view === 'Overview' || view === 'Analytics') && (
-                <>
-                  <div className="date-row">
-                    <CalendarDays size={15} />
-                    <select
-                      aria-label="Date range"
-                      value={range}
-                      onChange={(e) => setRange(e.target.value)}
-                    >
-                      <option value="1">Today</option>
-                      <option value="7">Last 7 days</option>
-                      <option value="30">Last 30 days</option>
-                      <option value="custom">Custom range</option>
-                    </select>
-                    {range === 'custom' && (
-                      <>
-                        <input
-                          type="date"
-                          aria-label="Start date"
-                          value={from}
-                          onChange={(e) => setFrom(e.target.value)}
-                        />
-                        <input
-                          type="date"
-                          aria-label="End date"
-                          value={to}
-                          onChange={(e) => setTo(e.target.value)}
-                        />
-                      </>
-                    )}
-                  </div>
-                  {dashboard.isError ? (
-                    <ErrorLine
-                      message={dashboard.error.message}
-                      retry={() => void dashboard.refetch()}
+              <div className="date-row">
+                <CalendarDays size={15} />
+                <select
+                  aria-label="Date range"
+                  value={range}
+                  onChange={(e) => setRange(e.target.value)}
+                >
+                  <option value="1">Today</option>
+                  <option value="7">Last 7 days</option>
+                  <option value="30">Last 30 days</option>
+                  <option value="custom">Custom range</option>
+                </select>
+                {range === 'custom' && (
+                  <>
+                    <input
+                      type="date"
+                      aria-label="Start date"
+                      value={from}
+                      onChange={(e) => setFrom(e.target.value)}
                     />
-                  ) : report ? (
-                    <Dashboard
-                      report={report}
-                      onOpen={open}
-                      onAdd={() => setDialog('add')}
-                      onLeads={() => go('Leads')}
-                      extra={view === 'Analytics'}
+                    <input
+                      type="date"
+                      aria-label="End date"
+                      value={to}
+                      onChange={(e) => setTo(e.target.value)}
                     />
-                  ) : (
-                    <Empty>Loading workspace metrics…</Empty>
-                  )}
-                  {view === 'Overview' && (
-                    <div className="dashboard-grid overview-bottom">
-                      <section className="surface">
-                        <header>
-                          <h2>Upcoming follow-ups</h2>
-                          <button className="text-button" onClick={() => go('Follow-ups')}>
-                            View all
-                          </button>
-                        </header>
-                        <ul className="row-list">
-                          {followups
-                            .filter((row) => row.status === 'pending')
-                            .slice(0, 4)
-                            .map((row) => (
-                              <li key={row._id}>
-                                <button className="text-button" onClick={() => open(row.leadId)}>
-                                  {row.description}
-                                </button>
-                                {shortDate(row.dueAt)}
-                              </li>
-                            ))}
-                        </ul>
-                        {!followups.some((row) => row.status === 'pending') && (
-                          <Empty>No upcoming follow-ups.</Empty>
-                        )}
-                      </section>
-                      <section className="surface">
-                        <header>
-                          <h2>Recent activity</h2>
-                          <button className="text-button" onClick={() => go('Integrations')}>
-                            Integrations
-                          </button>
-                        </header>
-                        <ul className="row-list">
-                          {(demo ? data.activities : activities.data || [])
-                            .slice(0, 4)
-                            .map((row) => (
-                              <li key={row._id}>
-                                {row.detail}
-                                <small>{shortDate(row.createdAt)}</small>
-                              </li>
-                            ))}
-                        </ul>
-                        {!(demo ? data.activities : activities.data)?.length && (
-                          <Empty>Lead activity will appear here.</Empty>
-                        )}
-                      </section>
-                    </div>
-                  )}
-                </>
-              )}
-              {(view === 'Leads' || view === 'Pipeline') && (
-                <>
-                  <div className="page-title">
-                    <div>
-                      <h1>{view}</h1>
-                      <p>
-                        {view === 'Leads'
-                          ? 'Search and manage your customer records.'
-                          : 'Move leads through your sales stages.'}
-                      </p>
-                    </div>
-                    <div className="toolbar">
-                      {view === 'Leads' && (
-                        <button className="button" onClick={() => run(exportLeads)}>
-                          Export CSV
-                        </button>
-                      )}
-                      <button className="button primary" onClick={() => setDialog('add')}>
-                        <Plus size={16} /> Add lead
-                      </button>
-                    </div>
-                  </div>
-                  <div className="toolbar filters">
-                    {view === 'Leads' && (
-                      <select
-                        aria-label="Status filter"
-                        value={status}
-                        onChange={(e) => {
-                          setStatus(e.target.value)
-                          setPage(1)
-                        }}
-                      >
-                        <option value="">All statuses</option>
-                        {stages.map((stage) => (
-                          <option key={stage}>{stage}</option>
-                        ))}
-                      </select>
-                    )}
-                    <select
-                      aria-label="Source filter"
-                      value={source}
-                      onChange={(e) => {
-                        setSource(e.target.value)
-                        setPage(1)
-                      }}
-                    >
-                      <option value="">All sources</option>
-                      {['Facebook', 'Instagram', 'Google Sheets', 'Manual', 'WhatsApp'].map(
-                        (item) => (
-                          <option key={item}>{item}</option>
-                        ),
-                      )}
-                    </select>
-                    {canManage && (
-                      <select
-                        aria-label="Assignee filter"
-                        value={agent}
-                        onChange={(e) => {
-                          setAgent(e.target.value)
-                          setPage(1)
-                        }}
-                      >
-                        <option value="">All assignees</option>
-                        {members.map((m) => (
-                          <option value={m.userId} key={m._id}>
-                            {m.user?.name || m.role}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    {view === 'Leads' && (
-                      <select
-                        aria-label="Sort leads"
-                        value={sort}
-                        onChange={(e) => {
-                          setSort(e.target.value)
-                          setPage(1)
-                        }}
-                      >
-                        <option value="newest">Newest first</option>
-                        <option value="oldest">Oldest first</option>
-                        <option value="name">Name</option>
-                      </select>
-                    )}
-                  </div>
-                  {leadQuery.isError ? (
-                    <ErrorLine
-                      message={leadQuery.error.message}
-                      retry={() => void leadQuery.refetch()}
-                    />
-                  ) : !demo && leadQuery.isPending ? (
-                    <Empty>Loading leads…</Empty>
-                  ) : view === 'Pipeline' ? (
-                    <>
-                      <Pipeline
-                        rows={leads}
-                        open={open}
-                        move={(id, status) =>
-                          run(() =>
-                            change('/leads/' + id + '/status', 'PATCH', { status }, 'Lead moved'),
-                          )
-                        }
-                      />
-                      {total > leads.length && (
-                        <p>
-                          Showing {leads.length} of {total} leads. Use filters to narrow the board.
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <section className="surface">
-                      {canManage && selection.length > 0 && (
-                        <header>
-                          <span>{selection.length} selected</span>
-                          <button className="button" onClick={() => setDialog('bulk-assign')}>
-                            Assign selected
-                          </button>
-                        </header>
-                      )}
-                      <LeadTable
-                        rows={leads}
-                        onOpen={open}
-                        selection={canManage ? selection : undefined}
-                        onSelect={(id) =>
-                          setSelection((current) =>
-                            current.includes(id)
-                              ? current.filter((item) => item !== id)
-                              : [...current, id],
-                          )
-                        }
-                        assignees={Object.fromEntries(
-                          members.map((member) => [
-                            member.userId,
-                            member.user?.name || member.role,
-                          ]),
-                        )}
-                      />
-                      <div className="pagination">
-                        <span>
-                          {total} {total === 1 ? 'lead' : 'leads'}
-                        </span>
-                        <div>
-                          <button
-                            className="button"
-                            disabled={page <= 1}
-                            onClick={() => setPage(page - 1)}
-                          >
-                            Previous
-                          </button>
-                          <button
-                            className="button"
-                            disabled={page * 25 >= total}
-                            onClick={() => setPage(page + 1)}
-                          >
-                            Next
-                          </button>
-                        </div>
-                      </div>
-                    </section>
-                  )}
-                </>
-              )}
-              {view === 'Inbox' && (
-                <Inbox
-                  key={scope || 'demo'}
-                  demo={demo}
-                  scope={scope}
-                  data={data}
-                  selected={selectedChat}
-                  select={setSelectedChat}
-                  change={change}
-                  openLead={open}
+                  </>
+                )}
+              </div>
+              {dashboard.isError ? (
+                <ErrorLine
+                  message={dashboard.error.message}
+                  retry={() => void dashboard.refetch()}
                 />
-              )}
-              {view === 'Templates' && (
-                <Templates
-                  demo={demo}
-                  scope={scope}
-                  data={data}
-                  canManage={canManage}
-                  change={change}
+              ) : report ? (
+                <Dashboard
+                  report={report}
+                  onOpen={open}
+                  onAdd={() => setDialog('add')}
+                  onLeads={() => go('Leads')}
+                  extra={view === 'Analytics'}
                 />
+              ) : (
+                <Empty>Loading workspace metrics…</Empty>
               )}
-              {view === 'Automations' && (
-                <Automations
-                  demo={demo}
-                  scope={scope}
-                  data={data}
-                  canManage={canManage}
-                  change={change}
-                />
-              )}
-              {view === 'Integrations' && (
-                <Integrations
-                  demo={demo}
-                  scope={scope}
-                  canManage={canManage}
-                  change={change}
-                  simulate={() => {
-                    state.simulateLead()
-                    setToast('Simulated lead captured')
-                  }}
-                />
-              )}
-              {view === 'Follow-ups' && (
-                <>
-                  <div className="page-title">
-                    <div>
-                      <h1>Follow-ups</h1>
-                      <p>Keep your next actions in one place.</p>
-                    </div>
-                  </div>
-                  <div className="toolbar filters">
-                    {['Today', 'Upcoming', 'Overdue', 'Completed'].map((tab) => (
-                      <button
-                        key={tab}
-                        className={'button ' + (taskTab === tab ? 'primary' : '')}
-                        onClick={() => setTaskTab(tab)}
-                      >
-                        {tab}
-                      </button>
-                    ))}
-                  </div>
+              {view === 'Overview' && (
+                <div className="dashboard-grid overview-bottom">
                   <section className="surface">
+                    <header>
+                      <h2>Upcoming follow-ups</h2>
+                      <button className="text-button" onClick={() => go('Follow-ups')}>
+                        View all
+                      </button>
+                    </header>
                     <ul className="row-list">
                       {followups
-                        .filter((task) =>
-                          taskTab === 'Completed'
-                            ? task.status === 'completed'
-                            : taskTab === 'Overdue'
-                              ? task.status === 'overdue'
-                              : taskTab === 'Today'
-                                ? (task.status === 'pending' || task.status === 'overdue') &&
-                                  new Date(task.dueAt).toDateString() === new Date().toDateString()
-                                : task.status === 'pending',
-                        )
-                        .map((task) => (
-                          <li key={task._id}>
-                            <div>
-                              <button className="text-button" onClick={() => open(task.leadId)}>
-                                {task.description}
-                              </button>
-                              <small>
-                                {new Date(task.dueAt).toLocaleString()} · {task.priority}
-                              </small>
-                            </div>
-                            {task.status !== 'completed' && (
-                              <button
-                                className="button"
-                                onClick={() =>
-                                  run(() =>
-                                    change(
-                                      '/followups/' + task._id,
-                                      'PATCH',
-                                      { status: 'completed' },
-                                      'Follow-up completed',
-                                    ),
-                                  )
-                                }
-                              >
-                                Complete
-                              </button>
-                            )}
+                        .filter((row) => row.status === 'pending')
+                        .slice(0, 4)
+                        .map((row) => (
+                          <li key={row._id}>
+                            <button className="text-button" onClick={() => open(row.leadId)}>
+                              {row.description}
+                            </button>
+                            {shortDate(row.dueAt)}
                           </li>
                         ))}
                     </ul>
-                  </section>
-                </>
-              )}
-              {view === 'Team' && (
-                <>
-                  <div className="page-title">
-                    <div>
-                      <h1>Team</h1>
-                      <p>Manage the people who can access this workspace.</p>
-                    </div>
-                    {owner && !demo && (
-                      <button className="button primary" onClick={() => setDialog('invite')}>
-                        Invite teammate
-                      </button>
+                    {!followups.some((row) => row.status === 'pending') && (
+                      <Empty>No upcoming follow-ups.</Empty>
                     )}
-                  </div>
+                  </section>
                   <section className="surface">
+                    <header>
+                      <h2>Recent activity</h2>
+                      {adminPanel && (
+                        <button className="text-button" onClick={() => go('Admin panel')}>
+                          Admin panel
+                        </button>
+                      )}
+                    </header>
                     <ul className="row-list">
-                      {members.map((member) => (
-                        <li key={member._id}>
-                          <div className="customer">
-                            <Avatar name={member.user?.name || member.role} />
-                            <div>
-                              {member.user?.name || member.role}
-                              <small>{member.user?.email}</small>
-                            </div>
-                          </div>
-                          {owner && !demo && member.role !== 'owner' ? (
-                            <div className="toolbar">
-                              <select
-                                aria-label="Member role"
-                                value={member.role}
-                                onChange={(e) =>
-                                  run(() =>
-                                    change('/team/' + member._id, 'PATCH', {
-                                      role: e.target.value,
-                                    }),
-                                  )
-                                }
-                              >
-                                <option value="agent">Sales agent</option>
-                                <option value="admin">Admin</option>
-                                <option value="client">Client</option>
-                              </select>
-                              <button
-                                className="button"
-                                onClick={() => {
-                                  if (confirm('Remove this team member?'))
-                                    run(() =>
-                                      change('/team/' + member._id, 'DELETE', {}, 'Member removed'),
-                                    )
-                                }}
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          ) : (
-                            <Status value={member.role} />
-                          )}
+                      {(demo ? data.activities : activities.data || []).slice(0, 4).map((row) => (
+                        <li key={row._id}>
+                          {row.detail}
+                          <small>{shortDate(row.createdAt)}</small>
                         </li>
                       ))}
                     </ul>
-                  </section>
-                </>
-              )}
-              {view === 'Settings' && (
-                <>
-                  <div className="page-title">
-                    <div>
-                      <h1>Settings</h1>
-                      <p>Workspace profile and timezone.</p>
-                    </div>
-                  </div>
-                  <section className="surface panel">
-                    {demo ? (
-                      <Empty>Workspace settings are available in a live account.</Empty>
-                    ) : canManage ? (
-                      <ActionForm
-                        onSave={(input) => change('/workspaces/' + scope, 'PATCH', input)}
-                      >
-                        <label>
-                          Workspace name
-                          <input name="name" required defaultValue={workspace?.name} />
-                        </label>
-                        <label>
-                          Timezone
-                          <input name="timezone" required defaultValue={workspace?.timezone} />
-                        </label>
-                      </ActionForm>
-                    ) : (
-                      <p>
-                        {workspace?.name} · {workspace?.timezone}
-                      </p>
+                    {!(demo ? data.activities : activities.data)?.length && (
+                      <Empty>Lead activity will appear here.</Empty>
                     )}
                   </section>
-                </>
+                </div>
               )}
+            </>
+          )}
+          {(view === 'Leads' || view === 'Pipeline') && (
+            <>
+              <div className="page-title">
+                <div>
+                  <h1>{view}</h1>
+                  <p>
+                    {view === 'Leads'
+                      ? 'Search and manage your customer records.'
+                      : 'Move leads through your sales stages.'}
+                  </p>
+                </div>
+                <div className="toolbar">
+                  {view === 'Leads' && (
+                    <button className="button" onClick={() => run(exportLeads)}>
+                      Export CSV
+                    </button>
+                  )}
+                  <button className="button primary" onClick={() => setDialog('add')}>
+                    <Plus size={16} /> Add lead
+                  </button>
+                </div>
+              </div>
+              <div className="toolbar filters">
+                {view === 'Leads' && (
+                  <select
+                    aria-label="Status filter"
+                    value={status}
+                    onChange={(e) => {
+                      setStatus(e.target.value)
+                      setPage(1)
+                    }}
+                  >
+                    <option value="">All statuses</option>
+                    {stages.map((stage) => (
+                      <option key={stage}>{stage}</option>
+                    ))}
+                  </select>
+                )}
+                <select
+                  aria-label="Source filter"
+                  value={source}
+                  onChange={(e) => {
+                    setSource(e.target.value)
+                    setPage(1)
+                  }}
+                >
+                  <option value="">All sources</option>
+                  {['Google Sheets', 'Manual'].map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
+                </select>
+                {canManage && (
+                  <select
+                    aria-label="Assignee filter"
+                    value={agent}
+                    onChange={(e) => {
+                      setAgent(e.target.value)
+                      setPage(1)
+                    }}
+                  >
+                    <option value="">All assignees</option>
+                    {members.map((m) => (
+                      <option value={m.userId} key={m._id}>
+                        {m.user?.name || m.role}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {view === 'Leads' && (
+                  <select
+                    aria-label="Sort leads"
+                    value={sort}
+                    onChange={(e) => {
+                      setSort(e.target.value)
+                      setPage(1)
+                    }}
+                  >
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                    <option value="name">Name</option>
+                  </select>
+                )}
+              </div>
+              {leadQuery.isError ? (
+                <ErrorLine
+                  message={leadQuery.error.message}
+                  retry={() => void leadQuery.refetch()}
+                />
+              ) : !demo && leadQuery.isPending ? (
+                <Empty>Loading leads…</Empty>
+              ) : view === 'Pipeline' ? (
+                <>
+                  <Pipeline
+                    rows={leads}
+                    open={open}
+                    move={(id, status) =>
+                      run(() =>
+                        change('/leads/' + id + '/status', 'PATCH', { status }, 'Lead moved'),
+                      )
+                    }
+                  />
+                  {total > leads.length && (
+                    <p>
+                      Showing {leads.length} of {total} leads. Use filters to narrow the board.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <section className="surface">
+                  {canManage && selection.length > 0 && (
+                    <header>
+                      <span>{selection.length} selected</span>
+                      <button className="button" onClick={() => setDialog('bulk-assign')}>
+                        Assign selected
+                      </button>
+                    </header>
+                  )}
+                  <LeadTable
+                    rows={leads}
+                    onOpen={open}
+                    selection={canManage ? selection : undefined}
+                    onSelect={(id) =>
+                      setSelection((current) =>
+                        current.includes(id)
+                          ? current.filter((item) => item !== id)
+                          : [...current, id],
+                      )
+                    }
+                    assignees={Object.fromEntries(
+                      members.map((member) => [member.userId, member.user?.name || member.role]),
+                    )}
+                  />
+                  <div className="pagination">
+                    <span>
+                      {total} {total === 1 ? 'lead' : 'leads'}
+                    </span>
+                    <div>
+                      <button
+                        className="button"
+                        disabled={page <= 1}
+                        onClick={() => setPage(page - 1)}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        className="button"
+                        disabled={page * 25 >= total}
+                        onClick={() => setPage(page + 1)}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+          {view === 'Follow-ups' && (
+            <>
+              <div className="page-title">
+                <div>
+                  <h1>Follow-ups</h1>
+                  <p>Keep your next actions in one place.</p>
+                </div>
+              </div>
+              <div className="toolbar filters">
+                {['Today', 'Upcoming', 'Overdue', 'Completed'].map((tab) => (
+                  <button
+                    key={tab}
+                    className={'button ' + (taskTab === tab ? 'primary' : '')}
+                    onClick={() => setTaskTab(tab)}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+              <section className="surface">
+                <ul className="row-list">
+                  {followups
+                    .filter((task) =>
+                      taskTab === 'Completed'
+                        ? task.status === 'completed'
+                        : taskTab === 'Overdue'
+                          ? task.status === 'overdue'
+                          : taskTab === 'Today'
+                            ? (task.status === 'pending' || task.status === 'overdue') &&
+                              new Date(task.dueAt).toDateString() === new Date().toDateString()
+                            : task.status === 'pending',
+                    )
+                    .map((task) => (
+                      <li key={task._id}>
+                        <div>
+                          <button className="text-button" onClick={() => open(task.leadId)}>
+                            {task.description}
+                          </button>
+                          <small>
+                            {new Date(task.dueAt).toLocaleString()} · {task.priority}
+                          </small>
+                        </div>
+                        {task.status !== 'completed' && (
+                          <button
+                            className="button"
+                            onClick={() =>
+                              run(() =>
+                                change(
+                                  '/followups/' + task._id,
+                                  'PATCH',
+                                  { status: 'completed' },
+                                  'Follow-up completed',
+                                ),
+                              )
+                            }
+                          >
+                            Complete
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                </ul>
+              </section>
+            </>
+          )}
+          {view === 'Admin panel' && adminPanel && scope && (
+            <>
+              <div className="page-title">
+                <div>
+                  <h1>Admin panel</h1>
+                  <p>Manage the sheet and client access for {workspace?.name}.</p>
+                </div>
+                <button className="button" onClick={() => setDialog('workspaces')}>
+                  Manage workspaces
+                </button>
+              </div>
+              <GoogleSheets
+                key={scope}
+                scope={scope}
+                refresh={async () => {
+                  await state.refreshWorkspace()
+                }}
+              />
+              <section className="surface panel">
+                <div className="page-title">
+                  <h2>Client access</h2>
+                  <div className="toolbar">
+                    <button className="button" onClick={() => setDialog('grant-client')}>
+                      Grant workspace access
+                    </button>
+                    <button className="button primary" onClick={() => setDialog('create-client')}>
+                      Create client account
+                    </button>
+                  </div>
+                </div>
+                <p>Clients can see leads imported into the workspaces you grant them.</p>
+                <ul className="row-list">
+                  {members
+                    .filter((member) => member.role === 'client')
+                    .map((member) => (
+                      <li key={member._id}>
+                        <div className="customer">
+                          <Avatar name={member.user?.name || member.role} />
+                          <div>
+                            {member.user?.name || member.role}
+                            <small>{member.user?.email}</small>
+                          </div>
+                        </div>
+                        <button
+                          className="button"
+                          onClick={() => {
+                            if (confirm('Remove this team member?'))
+                              run(() =>
+                                change('/team/' + member._id, 'DELETE', {}, 'Member removed'),
+                              )
+                          }}
+                        >
+                          Revoke access
+                        </button>
+                      </li>
+                    ))}
+                </ul>
+              </section>
+            </>
+          )}
+          {view === 'Settings' && (
+            <>
+              <div className="page-title">
+                <div>
+                  <h1>Settings</h1>
+                  <p>Workspace profile and timezone.</p>
+                </div>
+              </div>
+              <section className="surface panel">
+                {demo ? (
+                  <Empty>Workspace settings are available in a live account.</Empty>
+                ) : canManage ? (
+                  <ActionForm onSave={(input) => change('/workspaces/' + scope, 'PATCH', input)}>
+                    <label>
+                      Workspace name
+                      <input name="name" required defaultValue={workspace?.name} />
+                    </label>
+                    <label>
+                      Timezone
+                      <input name="timezone" required defaultValue={workspace?.timezone} />
+                    </label>
+                  </ActionForm>
+                ) : (
+                  <p>
+                    {workspace?.name} · {workspace?.timezone}
+                  </p>
+                )}
+              </section>
             </>
           )}
         </main>
@@ -1037,14 +910,6 @@ function WorkspaceContent() {
                 <button className="button" onClick={() => setDialog('schedule')}>
                   Schedule follow-up
                 </button>
-                {row.phone && (
-                  <button
-                    className="button whatsapp"
-                    onClick={() => run(() => openConversation(row, details.conversation))}
-                  >
-                    {details.conversation ? 'Open WhatsApp inbox' : 'Start WhatsApp conversation'}
-                  </button>
-                )}
               </div>
               <div className="detail-block">
                 <h3>Lead information</h3>
@@ -1253,7 +1118,6 @@ function WorkspaceContent() {
                       onClick={() => {
                         state.setSelected(item._id)
                         go('Overview')
-                        setSelectedChat('')
                       }}
                     >
                       {item.name}
@@ -1262,43 +1126,72 @@ function WorkspaceContent() {
                   </li>
                 ))}
               </ul>
-              <ActionForm
-                label="Create workspace"
-                onSave={async (input) => {
-                  await change('/workspaces', 'POST', input, 'Workspace created')
-                  close()
-                }}
-              >
-                <label>
-                  New workspace name
-                  <input name="name" required />
-                </label>
-              </ActionForm>
+              {crmAdmin && (
+                <ActionForm
+                  label="Create workspace"
+                  onSave={async (input) => {
+                    await state.createWorkspace(input.name)
+                    go('Admin panel')
+                    setToast('Workspace created')
+                  }}
+                >
+                  <label>
+                    New workspace name
+                    <input name="name" required />
+                  </label>
+                </ActionForm>
+              )}
             </>
           )}
         </Dialog>
       )}
-      {dialog === 'invite' && (
-        <Dialog title="Invite teammate" onClose={close}>
+      {adminPanel && ['create-client', 'grant-client'].includes(dialog) && (
+        <Dialog
+          title={dialog === 'create-client' ? 'Create client account' : 'Grant workspace access'}
+          onClose={close}
+        >
+          <p>Workspace: {workspace?.name}</p>
           <ActionForm
-            label="Send invitation"
+            label={dialog === 'create-client' ? 'Create account' : 'Grant access'}
             onSave={async (input) => {
-              await change('/team/invite', 'POST', input, 'Invitation sent')
+              await change(
+                '/team/clients',
+                'POST',
+                {
+                  ...input,
+                  action: dialog === 'create-client' ? 'create' : 'grant',
+                },
+                'Client access saved',
+              )
               close()
             }}
           >
+            {dialog === 'create-client' && (
+              <label>
+                Client name
+                <input name="name" required maxLength={160} />
+              </label>
+            )}
             <label>
               Email
               <input name="email" type="email" required />
             </label>
-            <label>
-              Role
-              <select name="role">
-                <option value="agent">Sales agent</option>
-                <option value="admin">Admin</option>
-                <option value="client">Client</option>
-              </select>
-            </label>
+            {dialog === 'create-client' && (
+              <>
+                <label>
+                  Password
+                  <input
+                    name="password"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={12}
+                    maxLength={128}
+                    required
+                  />
+                </label>
+                <p>Share these sign-in details with the client privately.</p>
+              </>
+            )}
           </ActionForm>
         </Dialog>
       )}
@@ -1360,13 +1253,12 @@ function WorkspaceContent() {
       )}
       {dialog === 'help' && (
         <Dialog title="Help" onClose={close}>
-          <p>
-            Open Leads to add a contact, or use Integrations to connect the sources for this
-            workspace.
-          </p>
-          <button className="button" onClick={() => go('Integrations')}>
-            Open integrations <ChevronDown size={14} />
-          </button>
+          <p>Open Leads to manage contacts and schedule follow-ups.</p>
+          {adminPanel && (
+            <button className="button" onClick={() => go('Admin panel')}>
+              Open admin panel <ChevronDown size={14} />
+            </button>
+          )}
         </Dialog>
       )}
       {toast && (
