@@ -47,3 +47,11 @@ See [Meta setup](docs/meta.md) and [deployment](docs/deployment.md).
 - WhatsApp drafts support a text body and numbered examples. Templates requiring media headers, dynamic buttons, or authentication components can be managed in WhatsApp Manager. Messages can use links from the configured media origin. Direct file uploads are pending.
 - Workspace data controls include scoped CSV exports and lead archiving. Permanent deletion and retention policy tools are pending.
 - The pricing section links to the free demo. Billing and paid plans are outside the initial release.
+## Local environment variables
+
+Backend credentials and server settings belong in `backend/.env`, copied from
+`backend/.env.example`. Frontend settings belong in `frontend/.env.local`, copied
+from `frontend/.env.example`. Both local environment files are ignored by Git.
+The frontend needs only `API_ORIGIN`, which points to the local backend.
+
+On Render and Vercel, set environment variables in each platform dashboard.
