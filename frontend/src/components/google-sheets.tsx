@@ -69,8 +69,30 @@ export function SyncFeedback({ feedback }: { feedback?: { message: string; warni
 export function GoogleSheets({ scope, refresh }: { scope: string; refresh: () => Promise<void> }) {
   const query = useApi<SheetSettings>(scope, path)
   const [adding, setAdding] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [removeError, setRemoveError] = useState('')
   const { busy, sync, feedback } = useSheetSync(scope, refresh)
   const rows = query.data?.connections || []
+  async function removeSheet(row: CampaignSheet) {
+    if (
+      !confirm(
+        'Remove "' +
+          row.campaignName +
+          '"? Sync will stop and imported leads for this campaign will be archived.',
+      )
+    )
+      return
+    setRemoving(true)
+    setRemoveError('')
+    try {
+      await api(path + '/' + row._id, scope, 'DELETE')
+      await refresh()
+    } catch (error) {
+      setRemoveError((error as Error).message)
+    } finally {
+      setRemoving(false)
+    }
+  }
   return (
     <section className="surface panel campaign-panel">
       <div className="campaign-panel-header">
@@ -84,7 +106,12 @@ export function GoogleSheets({ scope, refresh }: { scope: string; refresh: () =>
           </div>
         </div>
         {!!rows.length && (
-          <button type="button" className="button" onClick={() => void sync()} disabled={busy}>
+          <button
+            type="button"
+            className="button"
+            onClick={() => void sync()}
+            disabled={busy || removing}
+          >
             <RefreshCw size={15} /> {busy ? 'Syncing�' : 'Sync all'}
           </button>
         )}
@@ -116,19 +143,34 @@ export function GoogleSheets({ scope, refresh }: { scope: string; refresh: () =>
                 )}
                 {row.error && <small className="error">{row.error}</small>}
               </div>
-              <button
-                className="button"
-                type="button"
-                onClick={() => void sync(row._id)}
-                disabled={busy}
-              >
-                Sync now
-              </button>
+              <div className="toolbar">
+                <button
+                  className="button"
+                  type="button"
+                  onClick={() => void sync(row._id)}
+                  disabled={busy || removing}
+                >
+                  Sync now
+                </button>
+                <button
+                  className="button danger"
+                  type="button"
+                  onClick={() => void removeSheet(row)}
+                  disabled={busy || removing}
+                >
+                  Remove sheet
+                </button>
+              </div>
             </li>
           ))}
         </ul>
       )}
       <SyncFeedback feedback={feedback} />
+      {removeError && (
+        <p className="error" role="alert">
+          {removeError}
+        </p>
+      )}
       {query.data?.viewerEmail &&
         (adding || !rows.length ? (
           <ActionForm

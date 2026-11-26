@@ -1369,3 +1369,25 @@ dialog::backdrop {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.campaign-access {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+}
+.campaign-access legend {
+  padding: 0 4px;
+  font-weight: 650;
+}
+.campaign-access label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.campaign-access input[type='checkbox'] {
+  width: auto;
+  accent-color: var(--blue);
+}

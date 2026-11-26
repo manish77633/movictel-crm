@@ -2,11 +2,27 @@ import { Router, type Response } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import { z } from 'zod'
 import mongoose from 'mongoose'
-import { AccountToken, Invitation, Member, Session, User, Workspace } from './models.js'
+import {
+  AccountToken,
+  Invitation,
+  Member,
+  Session,
+  SheetConnection,
+  User,
+  Workspace,
+} from './models.js'
 import { cookie, env, frontend, production, required } from './config.js'
 import { isSheetAdmin, sheetAdminEmails } from './sheet-sources.js'
 import { digest, passwordHash, randomToken, validPassword } from './security.js'
-import { accessCookie, accessToken, authenticate, failure, manager, workspaced } from './runtime.js'
+import {
+  accessCookie,
+  accessToken,
+  authenticate,
+  failure,
+  manager,
+  publish,
+  workspaced,
+} from './runtime.js'
 import { email, line, password } from './validation.js'
 
 export const auth = Router()
@@ -193,15 +209,21 @@ workspaces.get('/', authenticate, async (req, res) => {
   const memberships = await Member.find({ userId: req.userId }).lean()
   const rows = await Workspace.find({
     _id: { $in: memberships.map((row) => row.workspaceId) },
+    archivedAt: null,
   }).lean()
   const user = await User.findById(req.userId).select('name email').lean()
   res.json({
     user,
     canAdministerSheets: await isSheetAdmin(req.userId),
-    rows: rows.map((row) => ({
-      ...row,
-      role: memberships.find((member) => member.workspaceId === String(row._id))?.role,
-    })),
+    rows: rows.map((row) => {
+      const membership = memberships.find((member) => member.workspaceId === String(row._id))
+      return {
+        ...row,
+        role: membership?.role,
+        campaignRestricted:
+          membership?.role === 'client' && Array.isArray(membership.campaignSheetIds),
+      }
+    }),
   })
 })
 workspaces.post('/', authenticate, async (req, res) => {
@@ -258,4 +280,29 @@ workspaces.patch('/:id', authenticate, workspaced, async (req, res) => {
     })
     .parse(req.body)
   res.json(await Workspace.findByIdAndUpdate(req.workspaceId, input, { new: true }))
+})
+workspaces.delete('/:id', authenticate, workspaced, async (req, res) => {
+  if (req.params.id !== req.workspaceId) return failure(404, 'Workspace not found.')
+  if (req.role !== 'owner' || !(await isSheetAdmin(req.userId)))
+    return failure(403, 'Only a CRM admin who owns this workspace can delete it.')
+  const workspaceId = req.workspaceId
+  await mongoose.connection.transaction(async (session) => {
+    if (
+      await SheetConnection.exists({ workspaceId, leaseUntil: { $gt: new Date() } }).session(
+        session,
+      )
+    )
+      return failure(409, 'A sheet is currently syncing. Try again after the sync finishes.')
+    const archived = await Workspace.updateOne(
+      { _id: workspaceId, archivedAt: null },
+      { archivedAt: new Date() },
+      { session },
+    )
+    if (!archived.modifiedCount) return failure(404, 'Workspace not found.')
+    await SheetConnection.deleteMany({ workspaceId }, { session })
+    await Member.deleteMany({ workspaceId }, { session })
+    await Invitation.deleteMany({ workspaceId }, { session })
+  })
+  publish(workspaceId)
+  res.json({ ok: true })
 })

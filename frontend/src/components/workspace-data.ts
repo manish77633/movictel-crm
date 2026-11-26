@@ -18,9 +18,21 @@ import {
 export type Account = {
   canAdministerSheets: boolean
   user: { _id: string; name: string; email: string }
-  rows: { _id: string; name: string; role: string; timezone: string }[]
+  rows: {
+    _id: string
+    name: string
+    role: string
+    timezone: string
+    campaignRestricted?: boolean
+  }[]
 }
-export type Member = { _id: string; userId: string; role: string; user?: Account['user'] }
+export type Member = {
+  _id: string
+  userId: string
+  role: string
+  campaignSheetIds?: string[]
+  user?: Account['user']
+}
 export type LeadDetails = {
   row: Lead
   notes: Note[]
@@ -196,12 +208,13 @@ export function useWorkspace(demo: boolean) {
   useEffect(() => {
     if (demo || !scope) return
     const socket = io({ auth: { workspaceId: scope }, transports: ['polling'] })
-    socket.on(
-      'workspace.changed',
-      () => void client.invalidateQueries({ queryKey: ['workspace', scope] }),
-    )
+    socket.on('workspace.changed', () => {
+      void client.invalidateQueries({ queryKey: ['workspace', scope] })
+      void client.invalidateQueries({ queryKey: ['account'] })
+    })
     const refresh = window.setInterval(() => {
-      if (document.visibilityState === 'visible')
+      if (document.visibilityState === 'visible') {
+        void client.invalidateQueries({ queryKey: ['account'] })
         void client.invalidateQueries({
           queryKey: ['workspace', scope],
           predicate: ({ queryKey }) =>
@@ -209,6 +222,7 @@ export function useWorkspace(demo: boolean) {
               String(queryKey[2]),
             ),
         })
+      }
     }, 30_000)
     socket.on('connect', () => void client.invalidateQueries({ queryKey: ['workspace', scope] }))
     return () => {
@@ -223,6 +237,11 @@ export function useWorkspace(demo: boolean) {
     const created = await api<{ _id: string }>('/workspaces', undefined, 'POST', { name })
     await client.invalidateQueries({ queryKey: ['account'] })
     setSelected(created._id)
+  }
+  async function deleteWorkspace(id: string) {
+    await api('/workspaces/' + id, id, 'DELETE')
+    await client.removeQueries({ queryKey: ['workspace', id] })
+    await client.invalidateQueries({ queryKey: ['account'] })
   }
   async function mutate(path: string, method: string, body: Record<string, unknown> = {}) {
     if (demo) {
@@ -242,6 +261,7 @@ export function useWorkspace(demo: boolean) {
     setSelected,
     mutate,
     createWorkspace,
+    deleteWorkspace,
     refreshWorkspace,
   }
 }

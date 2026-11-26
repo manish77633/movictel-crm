@@ -3,6 +3,7 @@ import { z } from 'zod'
 import mongoose from 'mongoose'
 import {
   Activity,
+  AccountToken,
   Conversation,
   FollowUp,
   Invitation,
@@ -11,6 +12,8 @@ import {
   Message,
   Note,
   Notification,
+  Session,
+  SheetConnection,
   User,
 } from './models.js'
 import { failure, leadFilter, manager, publish, record, schedule, visibleLead } from './runtime.js'
@@ -112,6 +115,8 @@ crm.get('/leads/export', async (req, res) => {
     )
 })
 crm.post('/leads', async (req, res) => {
+  if (req.campaignSheetIds)
+    return failure(403, 'This account can manage leads in its assigned campaigns.')
   const input = lead.parse(req.body)
   const row = await Lead.create({
     status: 'New',
@@ -219,7 +224,7 @@ crm.post('/leads/bulk-assign', async (req, res) => {
   res.json({ ok: true })
 })
 async function visibleIds(req: Request) {
-  return req.role === 'agent'
+  return req.role === 'agent' || req.campaignSheetIds
     ? await Lead.distinct('_id', leadFilter(req)).then((ids) => ids.map(String))
     : undefined
 }
@@ -343,7 +348,7 @@ crm.get(['/dashboard/overview', '/dashboard/analytics'], async (req, res) => {
     Lead.find(filter).select('-sheetFields').sort('-createdAt').limit(8).lean(),
   ])
   const conversations =
-    req.role === 'agent'
+    req.role === 'agent' || req.campaignSheetIds
       ? await Conversation.distinct('_id', {
           workspaceId: req.workspaceId,
           leadId: { $in: await visibleIds(req) },
@@ -363,7 +368,10 @@ crm.get(['/dashboard/overview', '/dashboard/analytics'], async (req, res) => {
   res.json({ ...report[0], recent, messages })
 })
 crm.get('/team', async (req, res) => {
-  const rows = await Member.find({ workspaceId: req.workspaceId }).lean()
+  const rows = await Member.find({
+    workspaceId: req.workspaceId,
+    ...(req.role === 'client' && { userId: req.userId }),
+  }).lean()
   const users = await User.find({ _id: { $in: rows.map((row) => row.userId) } })
     .select('name email')
     .lean()
@@ -371,16 +379,37 @@ crm.get('/team', async (req, res) => {
     rows.map((row) => ({ ...row, user: users.find((user) => String(user._id) === row.userId) })),
   )
 })
-crm.post('/team/clients', async (req, res) => {
+const clientCampaignAccess = z.array(id).max(500).nullable().optional()
+async function validateCampaignAccess(workspaceId: string, campaignIds?: string[] | null) {
+  if (!campaignIds) return
+  const distinct = [...new Set(campaignIds)]
+  if (
+    (await SheetConnection.countDocuments({ workspaceId, _id: { $in: distinct } })) !==
+    distinct.length
+  )
+    return failure(400, 'Select campaign sheets in this workspace.')
+  return distinct
+}
+async function requireClientAdmin(req: Request) {
   manager(req)
-  if (!(await isSheetAdmin(req.userId))) return failure(403, 'Only a CRM admin can add clients.')
+  if (!(await isSheetAdmin(req.userId))) return failure(403, 'Only a CRM admin can manage clients.')
+}
+crm.post('/team/clients', async (req, res) => {
+  await requireClientAdmin(req)
   const input = z
     .discriminatedUnion('action', [
-      z.object({ action: z.literal('create'), email, name: line, password }),
-      z.object({ action: z.literal('grant'), email }),
+      z.object({
+        action: z.literal('create'),
+        email,
+        name: line,
+        password,
+        campaignSheetIds: clientCampaignAccess,
+      }),
+      z.object({ action: z.literal('grant'), email, campaignSheetIds: clientCampaignAccess }),
     ])
     .parse(req.body)
   if (sheetAdminEmails().includes(input.email)) return failure(409, 'Use a client email address.')
+  const campaignSheetIds = await validateCampaignAccess(req.workspaceId, input.campaignSheetIds)
   await mongoose.connection.transaction(async (session) => {
     let user = await User.findOne({ email: input.email }).session(session)
     if (input.action === 'create') {
@@ -400,13 +429,88 @@ crm.post('/team/clients', async (req, res) => {
       user = created
     }
     if (!user?.verified) return failure(404, 'No active account uses this email.')
-    await Member.updateOne(
-      { workspaceId: req.workspaceId, userId: user.id },
-      { $setOnInsert: { role: 'client' } },
-      { upsert: true, session },
-    )
+    const membership = await Member.findOne({
+      workspaceId: req.workspaceId,
+      userId: user.id,
+    }).session(session)
+    if (membership) {
+      if (membership.role !== 'client')
+        return failure(409, 'This person already has a different role in this workspace.')
+      if (input.campaignSheetIds !== undefined) {
+        membership.campaignSheetIds = campaignSheetIds
+        await membership.save({ session })
+      }
+    } else {
+      await Member.create(
+        [{ workspaceId: req.workspaceId, userId: user.id, role: 'client', campaignSheetIds }],
+        { session },
+      )
+    }
   })
+  publish(req.workspaceId)
   res.status(201).json({ ok: true })
+})
+crm.patch('/team/clients/:id', async (req, res) => {
+  await requireClientAdmin(req)
+  const input = z.object({ campaignSheetIds: clientCampaignAccess.unwrap() }).parse(req.body)
+  const campaignSheetIds = await validateCampaignAccess(req.workspaceId, input.campaignSheetIds)
+  const row = await Member.findOneAndUpdate(
+    {
+      _id: id.parse(req.params.id),
+      workspaceId: req.workspaceId,
+      role: 'client',
+    },
+    campaignSheetIds ? { $set: { campaignSheetIds } } : { $unset: { campaignSheetIds: 1 } },
+  )
+  if (!row) return failure(404, 'Client not found in this workspace.')
+  publish(req.workspaceId)
+  res.json({ ok: true })
+})
+crm.delete('/team/clients/:id/account', async (req, res) => {
+  await requireClientAdmin(req)
+  const memberId = id.parse(req.params.id)
+  const affected = await mongoose.connection.transaction(async (session) => {
+    const member = await Member.findOne({
+      _id: memberId,
+      workspaceId: req.workspaceId,
+      role: 'client',
+    }).session(session)
+    if (!member?.userId) return failure(404, 'Client not found in this workspace.')
+    const user = await User.findById(member.userId).session(session)
+    if (!user?.email || sheetAdminEmails().includes(user.email))
+      return failure(403, 'This account cannot be deleted here.')
+    const memberships = await Member.find({ userId: user.id }).session(session)
+    const workspaceIds = memberships.map((row) => row.workspaceId)
+    const managed = await Member.countDocuments({
+      workspaceId: { $in: workspaceIds },
+      userId: req.userId,
+      role: { $in: ['owner', 'admin'] },
+    }).session(session)
+    if (memberships.some((row) => row.role !== 'client') || managed !== workspaceIds.length)
+      return failure(
+        403,
+        'You can delete this account only if you manage all its workspaces and it only has client access.',
+      )
+    await User.deleteOne({ _id: user.id }, { session })
+    await Member.deleteMany({ userId: user.id }, { session })
+    await Session.deleteMany({ userId: user.id }, { session })
+    await AccountToken.deleteMany({ userId: user.id }, { session })
+    await Notification.deleteMany({ userId: user.id }, { session })
+    await Invitation.deleteMany({ email: user.email }, { session })
+    await Lead.updateMany(
+      { workspaceId: { $in: workspaceIds }, assignedTo: user.id },
+      { $unset: { assignedTo: 1 } },
+      { session },
+    )
+    await FollowUp.updateMany(
+      { workspaceId: { $in: workspaceIds }, assignedTo: user.id },
+      { $unset: { assignedTo: 1 } },
+      { session },
+    )
+    return workspaceIds
+  })
+  affected.forEach(publish)
+  res.json({ ok: true })
 })
 crm.post('/team/invite', async (req, res) => {
   if (production) return failure(404, 'Use the admin panel to create client accounts.')
@@ -460,8 +564,13 @@ crm.delete('/team/:id', async (req, res) => {
   res.json({ ok: true })
 })
 crm.get('/notifications', async (req, res) => {
+  const ids = req.campaignSheetIds ? await visibleIds(req) : undefined
   res.json(
-    await Notification.find({ workspaceId: req.workspaceId, userId: req.userId })
+    await Notification.find({
+      workspaceId: req.workspaceId,
+      userId: req.userId,
+      ...(ids && { leadId: { $in: ids } }),
+    })
       .sort('-createdAt')
       .limit(40),
   )

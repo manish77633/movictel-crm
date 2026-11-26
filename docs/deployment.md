@@ -14,7 +14,7 @@ Create a Vercel project rooted at `frontend` and set `API_ORIGIN` to the backend
 
 ## Google Sheets lead intake
 
-Create one workspace per client and connect each campaign sheet inside it. To provision the first admin, set
+Create workspaces for the teams or clients you manage and connect campaign sheets inside them. To provision the first admin, set
 `CRM_ADMIN_EMAIL` to a new email address, include it in `GOOGLE_SHEETS_ADMIN_EMAILS`,
 and set `CRM_ADMIN_PASSWORD` to a strong password of at least 12 characters. Deploy
 and log in with those credentials. After the account is created, remove the two
@@ -39,11 +39,18 @@ or **Sync all** for the workspace. Each connection deduplicates its own Lead IDs
 New rows become leads. Later syncs refresh the original sheet fields in lead details
 and retain CRM statuses, notes, assignments, and edited contact fields.
 
-Use **Admin panel → Client access → Create client account** to create one account
-with access to the current workspace and its campaigns. Existing accounts can be
-added with **Grant workspace access**. The client's dashboard offers **All campaigns**,
-individual campaign filters, and **Refresh leads**. Store phone numbers with
-their country code for WhatsApp links.
+Use **Admin panel → Client access** to create or grant access to multiple client
+accounts in each workspace. Select individual campaigns for each client or grant
+all current and future campaigns. Change the selection with **Edit campaigns**.
+The client's dashboard offers **All campaigns**, individual campaign filters, and
+**Refresh leads** for the campaigns they can access. Store phone numbers with their
+country code for WhatsApp links.
+
+**Remove access** removes a client from the current workspace. **Delete account**
+removes the client everywhere and requires admin access to all of their workspaces.
+**Remove sheet** disconnects the spreadsheet and archives its CRM leads. Workspace
+owners can delete a workspace from **Manage workspaces**, which stops its sheet syncs
+and removes member access while retaining the archived CRM records.
 
 The backend checks for sheets due to sync every 30 seconds while it is running.
 Each sheet becomes due five minutes after its last attempt. Manual refresh fetches

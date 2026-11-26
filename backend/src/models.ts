@@ -44,13 +44,20 @@ export const User = collection(
 )
 export const Workspace = collection(
   'Workspace',
-  { name: String, timezone: String, assignmentCursor: { type: Number, default: 0 } },
+  {
+    name: String,
+    timezone: String,
+    archivedAt: Date,
+    assignmentCursor: { type: Number, default: 0 },
+  },
   [],
   false,
 )
-export const Member = collection('WorkspaceMember', { userId: String, role: String }, [
-  [{ workspaceId: 1, userId: 1 }, { unique: true }],
-])
+export const Member = collection(
+  'WorkspaceMember',
+  { userId: String, role: String, campaignSheetIds: { type: [String], default: undefined } },
+  [[{ workspaceId: 1, userId: 1 }, { unique: true }]],
+)
 export const Session = collection(
   'Session',
   { userId: String, digest: { type: String, unique: true }, expiresAt: Date },

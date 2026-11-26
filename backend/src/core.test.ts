@@ -429,6 +429,89 @@ test(
         ).json()
         assert.equal(refreshed.total, 2)
         assert.ok(refreshed.rows.some((lead: { name: string }) => lead.name === 'New sheet row'))
+
+        const firstClient = await Member.findOne({
+          userId: third.userId,
+          workspaceId: first.workspace,
+        })
+        const secondClient = await Member.findOne({
+          userId: managedUser!.id,
+          workspaceId: first.workspace,
+        })
+        assert.ok(firstClient && secondClient)
+        const setCampaigns = (memberId: string, campaignSheetIds: string[] | null) =>
+          request('/team/clients/' + memberId, {
+            ...first,
+            method: 'PATCH',
+            body: { campaignSheetIds },
+          })
+        assert.equal((await setCampaigns(firstClient.id, [legacySheet.id])).status, 400)
+        assert.equal((await setCampaigns(firstClient.id, [list[0]._id, list[1]._id])).status, 200)
+        assert.equal((await setCampaigns(secondClient.id, [list[2]._id])).status, 200)
+        assert.equal((await (await request('/campaign-sheets', client)).json()).length, 2)
+        const otherClient = { ...managed, workspace: first.workspace }
+        assert.equal((await (await request('/campaign-sheets', otherClient)).json()).length, 1)
+        assert.equal(
+          (await (await request('/leads?campaignSheetId=' + list[0]._id, otherClient)).json())
+            .total,
+          0,
+        )
+        assert.equal((await request(path, otherClient)).status, 404)
+        assert.equal((await request('/followups', otherClient)).status, 200)
+        assert.equal(
+          (
+            await request(sheets + '/sync', {
+              ...otherClient,
+              method: 'POST',
+              body: { campaignSheetId: list[0]._id },
+            })
+          ).status,
+          404,
+        )
+        assert.equal(
+          (await request(sheets + '/' + list[2]._id, { ...otherClient, method: 'DELETE' })).status,
+          403,
+        )
+        assert.equal(
+          (await request(sheets + '/' + list[2]._id, { ...first, method: 'DELETE' })).status,
+          200,
+        )
+        assert.equal((await (await request('/leads', otherClient)).json()).total, 0)
+        assert.equal((await (await request('/campaign-sheets', otherClient)).json()).length, 0)
+        assert.equal(
+          (
+            await request('/team/clients/' + firstClient.id + '/account', {
+              ...first,
+              method: 'DELETE',
+            })
+          ).status,
+          403,
+        )
+        assert.equal(
+          (
+            await request('/team/clients/' + secondClient.id + '/account', {
+              ...first,
+              method: 'DELETE',
+            })
+          ).status,
+          200,
+        )
+        assert.equal((await request('/workspaces', managed)).status, 401)
+        assert.equal((await setCampaigns(firstClient.id, null)).status, 200)
+
+        const createdWorkspace = await request('/workspaces', {
+          ...first,
+          method: 'POST',
+          body: { name: 'Delete test' },
+        })
+        assert.equal(createdWorkspace.status, 201)
+        const workspace = (await createdWorkspace.json())._id
+        assert.equal(
+          (await request('/workspaces/' + workspace, { ...first, workspace, method: 'DELETE' }))
+            .status,
+          200,
+        )
+        assert.equal((await request('/leads', { ...first, workspace })).status, 403)
       } finally {
         globalThis.fetch = networkFetch
       }

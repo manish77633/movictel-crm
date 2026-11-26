@@ -1,6 +1,15 @@
 import type { Server } from 'socket.io'
 import type { Request } from 'express'
-import { User, Member, Lead, Activity, Automation, Execution, Session } from './models.js'
+import {
+  User,
+  Member,
+  Lead,
+  Activity,
+  Automation,
+  Execution,
+  Session,
+  Workspace,
+} from './models.js'
 import { cookie, required } from './config.js'
 import { createHmac } from 'node:crypto'
 import { equal } from './security.js'
@@ -11,6 +20,7 @@ declare module 'express-serve-static-core' {
     userId: string
     workspaceId: string
     role: Role
+    campaignSheetIds?: string[]
   }
 }
 export const failure = (status: number, message: string): never => {
@@ -61,10 +71,15 @@ export async function workspaced(req: Request, _res: unknown, next: () => void) 
   if (!workspaceId || !/^[a-f0-9]{24}$/.test(workspaceId))
     return failure(400, 'Choose a workspace.')
   const membership = await Member.findOne({ workspaceId, userId: req.userId }).lean()
-  if (!membership || !['owner', 'admin', 'client', 'agent'].includes(membership.role || ''))
+  if (
+    !membership ||
+    !['owner', 'admin', 'client', 'agent'].includes(membership.role || '') ||
+    !(await Workspace.exists({ _id: workspaceId, archivedAt: null }))
+  )
     return failure(403, 'Workspace access denied.')
   req.workspaceId = workspaceId
   req.role = membership.role as Role
+  if (req.role === 'client') req.campaignSheetIds = membership.campaignSheetIds
   next()
 }
 export function manager(req: Request) {
@@ -76,6 +91,7 @@ export function leadFilter(req: Request) {
     workspaceId: req.workspaceId,
     archivedAt: null,
     ...(req.role === 'agent' ? { assignedTo: req.userId } : {}),
+    ...(req.campaignSheetIds && { $and: [{ campaignSheetId: { $in: req.campaignSheetIds } }] }),
   }
 }
 export async function visibleLead(req: Request, leadId: string) {

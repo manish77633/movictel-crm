@@ -3,9 +3,10 @@ import mongoose from 'mongoose'
 import { setTimeout } from 'node:timers/promises'
 import { z } from 'zod'
 import { env } from './config.js'
-import { Lead, SheetConnection, User } from './models.js'
+import { FollowUp, Lead, Member, SheetConnection, User } from './models.js'
 import { failure, manager, publish } from './runtime.js'
 import { parseSheetLink, readSheet, resolveSheet } from './google-sheets.js'
+import { id } from './validation.js'
 
 export const sheetSources = Router()
 export const sheetCampaigns = Router()
@@ -53,7 +54,10 @@ export async function prepareSheetConnections() {
 }
 
 sheetCampaigns.get('/', async (req, res) => {
-  const rows = await SheetConnection.find({ workspaceId: req.workspaceId })
+  const rows = await SheetConnection.find({
+    workspaceId: req.workspaceId,
+    ...(req.campaignSheetIds && { _id: { $in: req.campaignSheetIds } }),
+  })
     .select('campaignName tabName lastSyncAt')
     .sort('createdAt')
     .lean()
@@ -77,6 +81,7 @@ sheetSources.post('/sync', async (req, res) => {
   const rows = await SheetConnection.find({
     workspaceId: req.workspaceId,
     ...(campaignSheetId && { _id: campaignSheetId }),
+    ...(req.campaignSheetIds && { $and: [{ _id: { $in: req.campaignSheetIds } }] }),
   })
     .select('_id campaignName')
     .lean()
@@ -124,6 +129,43 @@ sheetSources.post('/', async (req, res) => {
     campaignName: campaignName || tab.title,
   })
   res.status(201).json({ id: row.id })
+})
+
+sheetSources.delete('/:id', async (req, res) => {
+  const campaignSheetId = id.parse(req.params.id)
+  await mongoose.connection.transaction(async (session) => {
+    const row = await SheetConnection.findOneAndDelete(
+      {
+        _id: campaignSheetId,
+        workspaceId: req.workspaceId,
+        $or: [{ leaseUntil: null }, { leaseUntil: { $lte: new Date() } }],
+      },
+      { session },
+    )
+    if (!row)
+      return failure(409, 'The sheet was removed or is currently syncing. Refresh and try again.')
+    const leadIds = await Lead.distinct('_id', {
+      workspaceId: req.workspaceId,
+      campaignSheetId,
+    }).session(session)
+    await Lead.updateMany(
+      { workspaceId: req.workspaceId, campaignSheetId, archivedAt: null },
+      { $set: { archivedAt: new Date() } },
+      { session },
+    )
+    await FollowUp.updateMany(
+      { workspaceId: req.workspaceId, leadId: { $in: leadIds.map(String) }, status: 'pending' },
+      { $set: { status: 'cancelled' } },
+      { session },
+    )
+    await Member.updateMany(
+      { workspaceId: req.workspaceId, campaignSheetIds: campaignSheetId },
+      { $pull: { campaignSheetIds: campaignSheetId } },
+      { session },
+    )
+  })
+  publish(req.workspaceId)
+  res.json({ ok: true })
 })
 async function syncSheetRows(
   rows: { _id: mongoose.Types.ObjectId; campaignName?: string }[],

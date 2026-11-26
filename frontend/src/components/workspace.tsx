@@ -102,6 +102,8 @@ function WorkspaceContent() {
     [page, setPage] = useState(1)
   const [selection, setSelection] = useState<string[]>([])
   const [selectedSheet, setSelectedSheet] = useState('')
+  const [editingClient, setEditingClient] = useState<Member>()
+  const [clientCampaignIds, setClientCampaignIds] = useState<string[] | null>(null)
   const [range, setRange] = useState('30'),
     [from, setFrom] = useState(''),
     [to, setTo] = useState('')
@@ -112,6 +114,7 @@ function WorkspaceContent() {
   const canManage = demo || workspace?.role === 'owner' || workspace?.role === 'admin'
   const crmAdmin = !!account.data?.canAdministerSheets
   const adminPanel = crmAdmin && canManage
+  const canAddLead = !workspace?.campaignRestricted
   const view =
     requestedView === 'Admin panel' && !adminPanel
       ? 'Overview'
@@ -470,17 +473,22 @@ function WorkspaceContent() {
               <Bell size={19} />
               {!!notifications.data?.some((n) => !n.read) && <i />}
             </button>
-            <button
-              className="icon-button quick-add"
-              aria-label="Quick add lead"
-              onClick={() => setDialog('add')}
-            >
-              <Plus size={20} />
-            </button>
+            {canAddLead && (
+              <button
+                className="icon-button quick-add"
+                aria-label="Quick add lead"
+                onClick={() => setDialog('add')}
+              >
+                <Plus size={20} />
+              </button>
+            )}
             <Avatar name={user} />
           </div>
         </header>
         <main className="app-content">
+          {workspace?.campaignRestricted && sheets.isSuccess && !campaignSheets.length && (
+            <p className="surface campaign-toolbar">Ask your CRM admin for access to a campaign.</p>
+          )}
           {campaignSheets.length > 0 &&
             ['Overview', 'Analytics', 'Leads', 'Pipeline'].includes(view) && (
               <section className="surface campaign-toolbar" aria-label="Campaign filters">
@@ -563,7 +571,7 @@ function WorkspaceContent() {
                 <Dashboard
                   report={report}
                   onOpen={open}
-                  onAdd={() => setDialog('add')}
+                  onAdd={canAddLead ? () => setDialog('add') : undefined}
                   onLeads={() => go('Leads')}
                   extra={view === 'Analytics'}
                 />
@@ -638,9 +646,11 @@ function WorkspaceContent() {
                       Export CSV
                     </button>
                   )}
-                  <button className="button primary" onClick={() => setDialog('add')}>
-                    <Plus size={16} /> Add lead
-                  </button>
+                  {canAddLead && (
+                    <button className="button primary" onClick={() => setDialog('add')}>
+                      <Plus size={16} /> Add lead
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="toolbar filters">
@@ -865,15 +875,27 @@ function WorkspaceContent() {
                 <div className="page-title">
                   <h2>Client access</h2>
                   <div className="toolbar">
-                    <button className="button" onClick={() => setDialog('grant-client')}>
+                    <button
+                      className="button"
+                      onClick={() => {
+                        setClientCampaignIds([])
+                        setDialog('grant-client')
+                      }}
+                    >
                       Grant workspace access
                     </button>
-                    <button className="button primary" onClick={() => setDialog('create-client')}>
+                    <button
+                      className="button primary"
+                      onClick={() => {
+                        setClientCampaignIds([])
+                        setDialog('create-client')
+                      }}
+                    >
                       Create client account
                     </button>
                   </div>
                 </div>
-                <p>Clients can see all campaign sheets in the workspaces you grant them.</p>
+                <p>Choose the campaigns each client can see in this workspace.</p>
                 <ul className="row-list">
                   {members
                     .filter((member) => member.role === 'client')
@@ -886,17 +908,59 @@ function WorkspaceContent() {
                             <small>{member.user?.email}</small>
                           </div>
                         </div>
-                        <button
-                          className="button"
-                          onClick={() => {
-                            if (confirm('Remove this team member?'))
-                              run(() =>
-                                change('/team/' + member._id, 'DELETE', {}, 'Member removed'),
+                        <div className="toolbar">
+                          <small>
+                            {member.campaignSheetIds
+                              ? member.campaignSheetIds.length + ' selected'
+                              : 'All campaigns'}
+                          </small>
+                          <button
+                            className="button"
+                            onClick={() => {
+                              setEditingClient(member)
+                              setClientCampaignIds(member.campaignSheetIds ?? null)
+                              setDialog('edit-client-access')
+                            }}
+                          >
+                            Edit campaigns
+                          </button>
+                          <button
+                            className="button"
+                            onClick={() => {
+                              if (confirm('Remove this client from this workspace?'))
+                                run(() =>
+                                  change(
+                                    '/team/' + member._id,
+                                    'DELETE',
+                                    {},
+                                    'Workspace access removed',
+                                  ),
+                                )
+                            }}
+                          >
+                            Remove access
+                          </button>
+                          <button
+                            className="button danger"
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  'Permanently delete this client account and its access in every workspace?',
+                                )
                               )
-                          }}
-                        >
-                          Revoke access
-                        </button>
+                                run(() =>
+                                  change(
+                                    '/team/clients/' + member._id + '/account',
+                                    'DELETE',
+                                    {},
+                                    'Client account deleted',
+                                  ),
+                                )
+                            }}
+                          >
+                            Delete account
+                          </button>
+                        </div>
                       </li>
                     ))}
                 </ul>
@@ -1194,12 +1258,40 @@ function WorkspaceContent() {
                       onClick={() => {
                         setSelectedSheet('')
                         state.setSelected(item._id)
-                        go('Overview')
+                        go(
+                          crmAdmin && ['owner', 'admin'].includes(item.role)
+                            ? 'Admin panel'
+                            : 'Overview',
+                        )
                       }}
                     >
                       {item.name}
                     </button>
-                    <span>{item.role}</span>
+                    <div className="toolbar">
+                      <span>{item.role}</span>
+                      {crmAdmin && item.role === 'owner' && (
+                        <button
+                          className="button danger"
+                          onClick={() => {
+                            if (
+                              confirm(
+                                'Delete "' +
+                                  item.name +
+                                  '"? Its campaigns will stop syncing and members will lose access.',
+                              )
+                            )
+                              run(async () => {
+                                await state.deleteWorkspace(item._id)
+                                setSelectedSheet('')
+                                close()
+                                setToast('Workspace deleted')
+                              })
+                          }}
+                        >
+                          Delete workspace
+                        </button>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1223,21 +1315,49 @@ function WorkspaceContent() {
           )}
         </Dialog>
       )}
-      {adminPanel && ['create-client', 'grant-client'].includes(dialog) && (
+      {adminPanel && ['create-client', 'grant-client', 'edit-client-access'].includes(dialog) && (
         <Dialog
-          title={dialog === 'create-client' ? 'Create client account' : 'Grant workspace access'}
+          title={
+            dialog === 'edit-client-access'
+              ? 'Edit campaign access'
+              : dialog === 'create-client'
+                ? 'Create client account'
+                : 'Grant workspace access'
+          }
           onClose={close}
         >
-          <p>Workspace: {workspace?.name}</p>
+          <p>
+            {workspace?.name}
+            {dialog === 'edit-client-access' &&
+              editingClient?.user &&
+              ' · ' + editingClient.user.name}
+          </p>
           <ActionForm
-            label={dialog === 'create-client' ? 'Create account' : 'Grant access'}
+            label={
+              dialog === 'edit-client-access'
+                ? 'Save campaign access'
+                : dialog === 'create-client'
+                  ? 'Create account'
+                  : 'Grant access'
+            }
             onSave={async (input) => {
+              if (dialog === 'edit-client-access' && editingClient) {
+                await change(
+                  '/team/clients/' + editingClient._id,
+                  'PATCH',
+                  { campaignSheetIds: clientCampaignIds },
+                  'Campaign access updated',
+                )
+                close()
+                return
+              }
               await change(
                 '/team/clients',
                 'POST',
                 {
                   ...input,
                   action: dialog === 'create-client' ? 'create' : 'grant',
+                  campaignSheetIds: clientCampaignIds,
                 },
                 'Client access saved',
               )
@@ -1250,10 +1370,12 @@ function WorkspaceContent() {
                 <input name="name" required maxLength={160} />
               </label>
             )}
-            <label>
-              Email
-              <input name="email" type="email" required />
-            </label>
+            {dialog !== 'edit-client-access' && (
+              <label>
+                Email
+                <input name="email" type="email" required />
+              </label>
+            )}
             {dialog === 'create-client' && (
               <>
                 <label>
@@ -1270,6 +1392,45 @@ function WorkspaceContent() {
                 <p>Share these sign-in details with the client privately.</p>
               </>
             )}
+            <fieldset className="campaign-access">
+              <legend>Campaign access</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={clientCampaignIds === null}
+                  onChange={(event) => setClientCampaignIds(event.target.checked ? null : [])}
+                />
+                All campaigns, including future sheets
+              </label>
+              {clientCampaignIds !== null && (
+                <>
+                  {campaignSheets.length ? (
+                    campaignSheets.map((sheet) => (
+                      <label key={sheet._id}>
+                        <input
+                          type="checkbox"
+                          checked={clientCampaignIds.includes(sheet._id)}
+                          onChange={(event) => {
+                            const checked = event.target.checked
+                            setClientCampaignIds((ids) =>
+                              checked
+                                ? [...(ids ?? []), sheet._id]
+                                : (ids ?? []).filter((id) => id !== sheet._id),
+                            )
+                          }}
+                        />
+                        {sheet.campaignName || sheet.tabName}
+                      </label>
+                    ))
+                  ) : (
+                    <p>Connect campaign sheets to assign them individually.</p>
+                  )}
+                  <small>
+                    {clientCampaignIds.length} of {campaignSheets.length} selected
+                  </small>
+                </>
+              )}
+            </fieldset>
           </ActionForm>
         </Dialog>
       )}
